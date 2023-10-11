@@ -18,7 +18,7 @@ package resizer
 
 import (
 	"github.com/kubernetes-csi/external-resizer/pkg/util"
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	csitrans "k8s.io/csi-translation-lib"
 	"k8s.io/klog/v2"
@@ -62,4 +62,8 @@ func (r *trivialResizer) DriverSupportsControlPlaneExpansion() bool {
 
 func (r *trivialResizer) Resize(pv *v1.PersistentVolume, requestSize resource.Quantity) (newSize resource.Quantity, fsResizeRequired bool, err error) {
 	return requestSize, true, nil
+}
+
+func (r *trivialResizer) Modify(pv *v1.PersistentVolume, mutableParameters map[string]string) (err error) {
+	return nil
 }

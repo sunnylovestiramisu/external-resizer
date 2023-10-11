@@ -4,7 +4,7 @@ go 1.21
 
 require (
 	github.com/container-storage-interface/spec v1.9.0
-	github.com/google/go-cmp v0.6.0 // indirect
+	github.com/google/go-cmp v0.6.0
 	github.com/google/gofuzz v1.2.0 // indirect
 	github.com/imdario/mergo v0.3.12 // indirect
 	github.com/kubernetes-csi/csi-lib-utils v0.15.0

@@ -107,3 +107,11 @@ func (c *MockClient) GetSecrets() map[string]string {
 func (c *MockClient) CloseConnection() {
 
 }
+
+func (c *MockClient) Modify(
+	ctx context.Context,
+	volumeID string,
+	secrets map[string]string,
+	mutableParameters map[string]string) error {
+	return nil
+}

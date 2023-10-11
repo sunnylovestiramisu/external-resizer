@@ -32,4 +32,6 @@ type Resizer interface {
 	CanSupport(pv *v1.PersistentVolume, pvc *v1.PersistentVolumeClaim) bool
 	// Resize executes the resize operation of this PV.
 	Resize(pv *v1.PersistentVolume, requestSize resource.Quantity) (newSize resource.Quantity, fsResizeRequired bool, err error)
+	// Modify executes the modify operation of this PVC.
+	Modify(pv *v1.PersistentVolume, mutableParameters map[string]string) error
 }

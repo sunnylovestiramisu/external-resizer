@@ -192,6 +192,55 @@ func (r *csiResizer) Resize(pv *v1.PersistentVolume, requestSize resource.Quanti
 	return *resource.NewQuantity(newSizeBytes, resource.BinarySI), nodeResizeRequired, err
 }
 
+func (r *csiResizer) Modify(pv *v1.PersistentVolume, mutableParameters map[string]string) error {
+
+	var volumeID string
+	var source *v1.CSIPersistentVolumeSource
+
+	if pv.Spec.CSI != nil {
+		// handle CSI volume
+		source = pv.Spec.CSI
+		volumeID = source.VolumeHandle
+	} else {
+		translator := csitrans.New()
+		if translator.IsMigratedCSIDriverByName(r.name) {
+			// handle migrated in-tree volume
+			csiPV, err := translator.TranslateInTreePVToCSI(pv)
+			if err != nil {
+				return fmt.Errorf("failed to translate persistent volume: %v", err)
+			}
+			source = csiPV.Spec.CSI
+			volumeID = source.VolumeHandle
+		} else {
+			// non-migrated in-tree volume
+			return fmt.Errorf("volume %v is not migrated to CSI", pv.Name)
+		}
+	}
+
+	if len(volumeID) == 0 {
+		return errors.New("empty volume handle")
+	}
+
+	var secrets map[string]string
+	secreRef := source.ControllerExpandSecretRef
+	if secreRef != nil {
+		var err error
+		secrets, err = getCredentials(r.k8sClient, secreRef)
+		if err != nil {
+			return err
+		}
+	}
+
+	ctx, cancel := timeoutCtx(r.timeout)
+
+	defer cancel()
+	err := r.client.Modify(ctx, volumeID, secrets, mutableParameters)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func (r *csiResizer) getVolumeCapabilities(pvSpec v1.PersistentVolumeSpec) (*csilib.VolumeCapability, error) {
 	supported, err := supportsControllerSingleNodeMultiWriter(r.client, r.timeout)
 	if err != nil {

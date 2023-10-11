@@ -56,6 +56,9 @@ type Client interface {
 
 	//CloseConnection closes the gRPC connection established by the client
 	CloseConnection()
+
+	// Modify modifies the volume's mutable parameters
+	Modify(ctx context.Context, volumeID string, secrets map[string]string, mutableParameters map[string]string) error
 }
 
 // New creates a new CSI client.
@@ -148,6 +151,24 @@ func (c *client) Expand(
 		return 0, false, err
 	}
 	return resp.CapacityBytes, resp.NodeExpansionRequired, nil
+}
+
+func (c *client) Modify(
+	ctx context.Context,
+	volumeID string,
+	secrets map[string]string,
+	mutableParameters map[string]string) error {
+	req := &csi.ControllerModifyVolumeRequest{
+		VolumeId:          volumeID,
+		Secrets:           secrets,
+		MutableParameters: mutableParameters,
+	}
+
+	_, err := c.ctrlClient.ControllerModifyVolume(ctx, req)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (c *client) CloseConnection() {
