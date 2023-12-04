@@ -24,6 +24,7 @@ import (
 	"google.golang.org/grpc/status"
 	v1 "k8s.io/api/core/v1"
 	storagev1alpha1 "k8s.io/api/storage/v1alpha1"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 )
 
@@ -38,14 +39,14 @@ func (ctrl *resizeController) modify(pvc *v1.PersistentVolumeClaim, pv *v1.Persi
 			return ctrl.validateVACAndModifyVolumeWithTarget(pvc, pv)
 		} else {
 			// Check if the PVC is in uncertain State
-			_, exists, err := ctrl.uncertainPVCs.GetByKey(pvc.Name)
+			pvcKey, err := cache.MetaNamespaceKeyFunc(pvc)
 			if err != nil {
 				return pvc, pv, err, false
 			}
-
-			if !exists {
+			_, ok := ctrl.uncertainPVCs[pvcKey]
+			if !ok {
 				// PVC is not in uncertain state
-				klog.V(3).InfoS("PVC is deleted or does not exist")
+				klog.V(3).InfoS("previous operation on the PVC failed with a final error, retrying")
 				return ctrl.validateVACAndModifyVolumeWithTarget(pvc, pv)
 			} else {
 				vacObj, _, err := ctrl.volumeAttributesClasses.GetByKey(*pvcSpecVacName)
@@ -54,7 +55,6 @@ func (ctrl *resizeController) modify(pvc *v1.PersistentVolumeClaim, pv *v1.Persi
 				}
 				return ctrl.controllerModifyVolumeWithTarget(pvc, pv, vacObj.(*storagev1alpha1.VolumeAttributesClass), pvcSpecVacName)
 			}
-
 		}
 
 	}
@@ -105,14 +105,18 @@ func (ctrl *resizeController) controllerModifyVolumeWithTarget(
 			ctrl.updateConditionBasedOnError(pvc, err)
 			if !isFinalError(err) {
 				// update conditions and cache pvc as uncertain
-				ctrl.uncertainPVCs.Add(pvc)
+				pvcKey, err := cache.MetaNamespaceKeyFunc(pvc)
+				if err != nil {
+					return pvc, pv, err, false
+				}
+				ctrl.uncertainPVCs[pvcKey] = *pvc
 			} else {
 				ctrl.removePVCFromModifyVolumeUncertainCache(pvc)
 			}
 		}
-		// Record an event to indicate that resize operation is failed.
+		// Record an event to indicate that modify operation is failed.
 		ctrl.eventRecorder.Eventf(pvc, v1.EventTypeWarning, util.VolumeModifyFailed, err.Error())
-		return pvc, pv, err, true
+		return pvc, pv, err, false
 	}
 }
 

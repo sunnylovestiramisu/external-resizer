@@ -74,8 +74,8 @@ type resizeController struct {
 	claims cache.Store
 	// a cache to store VolumeAttributesClass objects
 	volumeAttributesClasses cache.Store
-	// a cache to store PVCs in uncertain state
-	uncertainPVCs          cache.Store
+	// a cache to store modify volume in progress or infeasible PVCs in uncertain state
+	uncertainPVCs          map[string]v1.PersistentVolumeClaim
 	handleVolumeInUseError bool
 }
 
@@ -116,12 +116,6 @@ func NewResizeController(
 		handleVolumeInUseError:  handleVolumeInUseError,
 	}
 
-	// Cache all the InProgress/Infeasible PVCs as Uncertain for ModifyVolume
-	if utilfeature.DefaultFeatureGate.Enabled(features.VolumeAttributesClass) {
-		ctrl.uncertainPVCs = pvcInformer.Informer().GetStore()
-		ctrl.initUncertainPVCs()
-	}
-
 	// Add a resync period as the PVC's request size can be resized again when we handling
 	// a previous resizing request of the same PVC.
 	pvcInformer.Informer().AddEventHandlerWithResyncPeriod(cache.ResourceEventHandlerFuncs{
@@ -146,13 +140,20 @@ func NewResizeController(
 	return ctrl
 }
 
-func (ctrl *resizeController) initUncertainPVCs() {
-	for _, pvcObj := range ctrl.uncertainPVCs.List() {
+func (ctrl *resizeController) initUncertainPVCs() error {
+	ctrl.uncertainPVCs = make(map[string]v1.PersistentVolumeClaim)
+	for _, pvcObj := range ctrl.claims.List() {
 		pvc := pvcObj.(*v1.PersistentVolumeClaim)
-		if pvc.Status.ModifyVolumeStatus == nil || pvc.Status.ModifyVolumeStatus.Status == v1.PersistentVolumeClaimModifyVolumePending || pvc.Status.ModifyVolumeStatus.Status == "" {
-			ctrl.uncertainPVCs.Delete(pvcObj)
+		if pvc.Status.ModifyVolumeStatus != nil && (pvc.Status.ModifyVolumeStatus.Status == v1.PersistentVolumeClaimModifyVolumeInProgress || pvc.Status.ModifyVolumeStatus.Status == v1.PersistentVolumeClaimModifyVolumeInfeasible) {
+			pvcKey, err := cache.MetaNamespaceKeyFunc(pvc)
+			if err != nil {
+				return err
+			}
+			ctrl.uncertainPVCs[pvcKey] = *pvc.DeepCopy()
 		}
 	}
+
+	return nil
 }
 
 func (ctrl *resizeController) addPVC(obj interface{}) {
@@ -201,6 +202,41 @@ func (ctrl *resizeController) updatePVC(oldObj, newObj interface{}) {
 	newPVC, ok := newObj.(*v1.PersistentVolumeClaim)
 	if !ok || newPVC == nil {
 		return
+	}
+
+	// Only trigger modify volume if the following conditions are met
+	// 1. Feature gate is enabled
+	// 2. Non empty vac name
+	// 3. oldVacName != newVacName
+	// 4. PVC is in Bound state
+	if utilfeature.DefaultFeatureGate.Enabled(features.VolumeAttributesClass) {
+		oldVacName := oldPVC.Spec.VolumeAttributesClassName
+		newVacName := newPVC.Spec.VolumeAttributesClassName
+		if newVacName != nil && *newVacName != "" && *newVacName != *oldVacName && oldPVC.Status.Phase == v1.ClaimBound {
+			volumeObj, exists, err := ctrl.volumes.GetByKey(oldPVC.Spec.VolumeName)
+			if err != nil {
+				klog.Errorf("Get PV %q of pvc %q failed: %v", oldPVC.Spec.VolumeName, klog.KObj(oldPVC), err)
+				return
+			}
+			if !exists {
+				klog.InfoS("PV bound to PVC not found", "PV", oldPVC.Spec.VolumeName, "PVC", klog.KObj(oldPVC))
+				return
+			}
+
+			pv, ok := volumeObj.(*v1.PersistentVolume)
+			if !ok {
+				klog.Errorf("expected volume but got %+v", volumeObj)
+				return
+			}
+
+			_, _, err, _ = ctrl.modify(newPVC, pv)
+			if err != nil {
+				klog.Errorf("failed to modify volume at pvc update %v", err)
+				return
+			}
+		} else {
+			klog.V(4).InfoS("No need to modify PVC", "PVC", klog.KObj(newPVC))
+		}
 	}
 
 	newReq := newPVC.Spec.Resources.Requests[v1.ResourceStorage]
@@ -285,9 +321,22 @@ func (ctrl *resizeController) Run(
 		informersSyncd = append(informersSyncd, ctrl.podListerSynced)
 	}
 
+	// Only WaitForCacheSync for VAC if feature gate is enabled
+	if utilfeature.DefaultFeatureGate.Enabled(features.VolumeAttributesClass) {
+		informersSyncd = append(informersSyncd, ctrl.vacSynced)
+	}
+
 	if !cache.WaitForCacheSync(stopCh, informersSyncd...) {
-		klog.ErrorS(nil, "Cannot sync pod, pv or pvc caches")
+		klog.ErrorS(nil, "Cannot sync pod, pv, pvc or vac caches")
 		return
+	}
+
+	// Cache all the InProgress/Infeasible PVCs as Uncertain for ModifyVolume
+	if utilfeature.DefaultFeatureGate.Enabled(features.VolumeAttributesClass) {
+		err := ctrl.initUncertainPVCs()
+		if err != nil {
+			klog.ErrorS(err, "Failed to initialize uncertain pvcs")
+		}
 	}
 
 	for i := 0; i < workers; i++ {
@@ -357,15 +406,20 @@ func (ctrl *resizeController) syncPVC(key string) error {
 		return fmt.Errorf("expected volume but got %+v", volumeObj)
 	}
 
-	vacName := pvc.Spec.VolumeAttributesClassName
 	// Only trigger modify volume if the following conditions are met
-	if utilfeature.DefaultFeatureGate.Enabled(features.VolumeAttributesClass) && vacName != nil && *vacName != "" {
-		_, _, err, _ := ctrl.modify(pvc, pv)
-		if err != nil {
-			return err
+	// 1. Feature gate is enabled
+	// 2. Non empty vac name
+	// 3. PVC is in Bound state
+	if utilfeature.DefaultFeatureGate.Enabled(features.VolumeAttributesClass) {
+		vacName := pvc.Spec.VolumeAttributesClassName
+		if vacName != nil && *vacName != "" && pvc.Status.Phase == v1.ClaimBound {
+			_, _, err, _ := ctrl.modify(pvc, pv)
+			if err != nil {
+				return err
+			}
+		} else {
+			klog.V(4).InfoS("No need to modify PV", "PV", klog.KObj(pv))
 		}
-	} else {
-		klog.V(4).InfoS("No need to modify PV", "PV", klog.KObj(pv))
 	}
 
 	if utilfeature.DefaultFeatureGate.Enabled(features.AnnotateFsResize) && ctrl.isNodeExpandComplete(pvc, pv) && metav1.HasAnnotation(pv.ObjectMeta, util.AnnPreResizeCapacity) {
