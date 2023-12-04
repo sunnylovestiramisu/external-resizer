@@ -150,10 +150,9 @@ func (ctrl *resizeController) removePVCFromModifyVolumeUncertainCache(pvc *v1.Pe
 	if err != nil {
 		return err
 	}
-	_, exists, err := ctrl.uncertainPVCs.GetByKey(pvcKey)
-
-	if exists {
-		err = ctrl.uncertainPVCs.Delete(pvc)
+	_, ok := ctrl.uncertainPVCs[pvcKey]
+	if ok {
+		delete(ctrl.uncertainPVCs, pvcKey)
 	}
 
 	if err != nil {
