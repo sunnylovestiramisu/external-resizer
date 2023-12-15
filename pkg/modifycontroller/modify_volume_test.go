@@ -1,4 +1,4 @@
-package controller
+package modifycontroller
 
 import (
 	"context"
@@ -15,6 +15,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	"k8s.io/client-go/informers"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/util/workqueue"
 	featuregatetesting "k8s.io/component-base/featuregate/testing"
 )
@@ -88,7 +91,7 @@ func TestModify(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			// Setup
 			defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.VolumeAttributesClass, true)()
-			client := csi.NewMockClient("foo", true, true, true, true)
+			client := csi.NewMockClient("foo", true, true, true, true, true)
 			driverName, _ := client.GetDriverName(context.TODO())
 
 			var initialObjects []runtime.Object
@@ -109,12 +112,12 @@ func TestModify(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Test %s: Unable to create resizer: %v", test.name, err)
 			}
-			controller := NewResizeController(driverName,
+			controller := NewModifyController(driverName,
 				csiResizer, kubeClient,
 				time.Second, informerFactory,
-				workqueue.DefaultControllerRateLimiter(), true /*handleVolumeInUseError*/)
+				workqueue.DefaultControllerRateLimiter())
 
-			ctrlInstance, _ := controller.(*resizeController)
+			ctrlInstance, _ := controller.(*modifyController)
 
 			stopCh := make(chan struct{})
 			informerFactory.Start(stopCh)
@@ -190,4 +193,10 @@ func createTestPVC(pvcName string, vacName string, curVacName string, targetVacN
 		},
 	}
 	return pvc
+}
+
+func fakeK8s(objs []runtime.Object) (kubernetes.Interface, informers.SharedInformerFactory) {
+	client := fake.NewSimpleClientset(objs...)
+	informerFactory := informers.NewSharedInformerFactory(client, 0)
+	return client, informerFactory
 }

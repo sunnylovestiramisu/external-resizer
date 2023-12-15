@@ -46,7 +46,11 @@ type Client interface {
 	// in NodeGetCapabilities() gRPC call.
 	SupportsNodeResize(ctx context.Context) (bool, error)
 
-	// SupportsControllerResize returns whether the CSI driver reports
+	// SupportsControllerModify returns whether the CSI driver reports MODIFY_VOLUME
+	// in ControllerGetCapabilities() gRPC call.
+	SupportsControllerModify(ctx context.Context) (bool, error)
+
+	// SupportsControllerSingleNodeMultiWriter returns whether the CSI driver reports
 	// SINGLE_NODE_MULTI_WRITER in ControllerGetCapabilities() gRPC call.
 	SupportsControllerSingleNodeMultiWriter(ctx context.Context) (bool, error)
 
@@ -124,6 +128,14 @@ func (c *client) SupportsNodeResize(ctx context.Context) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+func (c *client) SupportsControllerModify(ctx context.Context) (bool, error) {
+	caps, err := csirpc.GetControllerCapabilities(ctx, c.conn)
+	if err != nil {
+		return false, fmt.Errorf("error getting controller capabilities: %v", err)
+	}
+	return caps[csi.ControllerServiceCapability_RPC_MODIFY_VOLUME], nil
 }
 
 func (c *client) SupportsControllerSingleNodeMultiWriter(ctx context.Context) (bool, error) {

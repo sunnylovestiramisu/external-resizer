@@ -35,6 +35,7 @@ import (
 
 	"github.com/kubernetes-csi/csi-lib-utils/leaderelection"
 	"github.com/kubernetes-csi/external-resizer/pkg/controller"
+	"github.com/kubernetes-csi/external-resizer/pkg/modifycontroller"
 	"github.com/kubernetes-csi/external-resizer/pkg/resizer"
 	"github.com/kubernetes-csi/external-resizer/pkg/util"
 	csitrans "k8s.io/csi-translation-lib"
@@ -204,8 +205,16 @@ func main() {
 
 	}
 
+	mc := modifycontroller.NewModifyController(resizerName, csiResizer, kubeClient, *resyncPeriod, informerFactory,
+		workqueue.NewItemExponentialFailureRateLimiter(*retryIntervalStart, *retryIntervalMax))
+	modifyRun := func(ctx context.Context) {
+		informerFactory.Start(wait.NeverStop)
+		mc.Run(*workers, ctx)
+	}
+
 	if !*enableLeaderElection {
 		run(context.TODO())
+		modifyRun(context.TODO())
 	} else {
 		lockName := "external-resizer-" + util.SanitizeName(resizerName)
 		leKubeClient, err := kubernetes.NewForConfig(config)
@@ -214,20 +223,32 @@ func main() {
 			klog.FlushAndExit(klog.ExitFlushTimeout, 1)
 		}
 		le := leaderelection.NewLeaderElection(leKubeClient, lockName, run)
+		mle := leaderelection.NewLeaderElection(leKubeClient, lockName, modifyRun)
 		if *httpEndpoint != "" {
 			le.PrepareHealthCheck(mux, leaderelection.DefaultHealthCheckTimeout)
+			mle.PrepareHealthCheck(mux, leaderelection.DefaultHealthCheckTimeout)
 		}
 
 		if *leaderElectionNamespace != "" {
 			le.WithNamespace(*leaderElectionNamespace)
+			mle.WithNamespace(*leaderElectionNamespace)
 		}
 
 		le.WithLeaseDuration(*leaderElectionLeaseDuration)
 		le.WithRenewDeadline(*leaderElectionRenewDeadline)
 		le.WithRetryPeriod(*leaderElectionRetryPeriod)
 
+		mle.WithLeaseDuration(*leaderElectionLeaseDuration)
+		mle.WithRenewDeadline(*leaderElectionRenewDeadline)
+		mle.WithRetryPeriod(*leaderElectionRetryPeriod)
+
 		if err := le.Run(); err != nil {
-			klog.ErrorS(err, "Error initializing leader election")
+			klog.ErrorS(err, "Error initializing leader election for resize")
+			klog.FlushAndExit(klog.ExitFlushTimeout, 1)
+		}
+
+		if err := mle.Run(); err != nil {
+			klog.ErrorS(err, "Error initializing leader election for modify")
 			klog.FlushAndExit(klog.ExitFlushTimeout, 1)
 		}
 	}

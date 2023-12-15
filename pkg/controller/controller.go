@@ -45,9 +45,8 @@ import (
 	"k8s.io/klog/v2"
 )
 
-// ResizeController watches PVCs and checks if they are requesting an resizing/modify operation.
-// If requested, it will resize according PVs and update PVCs' status to reflect the new size
-// and/or it will modify the volume according to parameters in VolumeAttributesClass
+// ResizeController watches PVCs and checks if they are requesting an resizing operation.
+// If requested, it will resize according PVs and update PVCs' status to reflect the new size.
 type ResizeController interface {
 	// Run starts the controller.
 	Run(workers int, ctx context.Context)
@@ -61,7 +60,6 @@ type resizeController struct {
 	eventRecorder record.EventRecorder
 	pvSynced      cache.InformerSynced
 	pvcSynced     cache.InformerSynced
-	vacSynced     cache.InformerSynced
 
 	usedPVCs *inUsePVCStore
 
@@ -71,11 +69,7 @@ type resizeController struct {
 	// a cache to store PersistentVolume objects
 	volumes cache.Store
 	// a cache to store PersistentVolumeClaim objects
-	claims cache.Store
-	// a cache to store VolumeAttributesClass objects
-	volumeAttributesClasses cache.Store
-	// a cache to store modify volume in progress or infeasible PVCs in uncertain state
-	uncertainPVCs          map[string]v1.PersistentVolumeClaim
+	claims                 cache.Store
 	handleVolumeInUseError bool
 }
 
@@ -90,7 +84,6 @@ func NewResizeController(
 	handleVolumeInUseError bool) ResizeController {
 	pvInformer := informerFactory.Core().V1().PersistentVolumes()
 	pvcInformer := informerFactory.Core().V1().PersistentVolumeClaims()
-	vacInformer := informerFactory.Storage().V1alpha1().VolumeAttributesClasses()
 	eventBroadcaster := record.NewBroadcaster()
 	eventBroadcaster.StartStructuredLogging(0)
 	eventBroadcaster.StartRecordingToSink(&corev1.EventSinkImpl{Interface: kubeClient.CoreV1().Events(v1.NamespaceAll)})
@@ -101,19 +94,17 @@ func NewResizeController(
 		pvcRateLimiter, fmt.Sprintf("%s-pvc", name))
 
 	ctrl := &resizeController{
-		name:                    name,
-		resizer:                 resizer,
-		kubeClient:              kubeClient,
-		pvSynced:                pvInformer.Informer().HasSynced,
-		pvcSynced:               pvcInformer.Informer().HasSynced,
-		vacSynced:               vacInformer.Informer().HasSynced,
-		claimQueue:              claimQueue,
-		volumes:                 pvInformer.Informer().GetStore(),
-		claims:                  pvcInformer.Informer().GetStore(),
-		volumeAttributesClasses: vacInformer.Informer().GetStore(),
-		eventRecorder:           eventRecorder,
-		usedPVCs:                newUsedPVCStore(),
-		handleVolumeInUseError:  handleVolumeInUseError,
+		name:                   name,
+		resizer:                resizer,
+		kubeClient:             kubeClient,
+		pvSynced:               pvInformer.Informer().HasSynced,
+		pvcSynced:              pvcInformer.Informer().HasSynced,
+		claimQueue:             claimQueue,
+		volumes:                pvInformer.Informer().GetStore(),
+		claims:                 pvcInformer.Informer().GetStore(),
+		eventRecorder:          eventRecorder,
+		usedPVCs:               newUsedPVCStore(),
+		handleVolumeInUseError: handleVolumeInUseError,
 	}
 
 	// Add a resync period as the PVC's request size can be resized again when we handling
@@ -138,22 +129,6 @@ func NewResizeController(
 	}
 
 	return ctrl
-}
-
-func (ctrl *resizeController) initUncertainPVCs() error {
-	ctrl.uncertainPVCs = make(map[string]v1.PersistentVolumeClaim)
-	for _, pvcObj := range ctrl.claims.List() {
-		pvc := pvcObj.(*v1.PersistentVolumeClaim)
-		if pvc.Status.ModifyVolumeStatus != nil && (pvc.Status.ModifyVolumeStatus.Status == v1.PersistentVolumeClaimModifyVolumeInProgress || pvc.Status.ModifyVolumeStatus.Status == v1.PersistentVolumeClaimModifyVolumeInfeasible) {
-			pvcKey, err := cache.MetaNamespaceKeyFunc(pvc)
-			if err != nil {
-				return err
-			}
-			ctrl.uncertainPVCs[pvcKey] = *pvc.DeepCopy()
-		}
-	}
-
-	return nil
 }
 
 func (ctrl *resizeController) addPVC(obj interface{}) {
@@ -202,41 +177,6 @@ func (ctrl *resizeController) updatePVC(oldObj, newObj interface{}) {
 	newPVC, ok := newObj.(*v1.PersistentVolumeClaim)
 	if !ok || newPVC == nil {
 		return
-	}
-
-	// Only trigger modify volume if the following conditions are met
-	// 1. Feature gate is enabled
-	// 2. Non empty vac name
-	// 3. oldVacName != newVacName
-	// 4. PVC is in Bound state
-	if utilfeature.DefaultFeatureGate.Enabled(features.VolumeAttributesClass) {
-		oldVacName := oldPVC.Spec.VolumeAttributesClassName
-		newVacName := newPVC.Spec.VolumeAttributesClassName
-		if newVacName != nil && *newVacName != "" && *newVacName != *oldVacName && oldPVC.Status.Phase == v1.ClaimBound {
-			volumeObj, exists, err := ctrl.volumes.GetByKey(oldPVC.Spec.VolumeName)
-			if err != nil {
-				klog.Errorf("Get PV %q of pvc %q failed: %v", oldPVC.Spec.VolumeName, klog.KObj(oldPVC), err)
-				return
-			}
-			if !exists {
-				klog.InfoS("PV bound to PVC not found", "PV", oldPVC.Spec.VolumeName, "PVC", klog.KObj(oldPVC))
-				return
-			}
-
-			pv, ok := volumeObj.(*v1.PersistentVolume)
-			if !ok {
-				klog.Errorf("expected volume but got %+v", volumeObj)
-				return
-			}
-
-			_, _, err, _ = ctrl.modify(newPVC, pv)
-			if err != nil {
-				klog.Errorf("failed to modify volume at pvc update %v", err)
-				return
-			}
-		} else {
-			klog.V(4).InfoS("No need to modify PVC", "PVC", klog.KObj(newPVC))
-		}
 	}
 
 	newReq := newPVC.Spec.Resources.Requests[v1.ResourceStorage]
@@ -321,22 +261,9 @@ func (ctrl *resizeController) Run(
 		informersSyncd = append(informersSyncd, ctrl.podListerSynced)
 	}
 
-	// Only WaitForCacheSync for VAC if feature gate is enabled
-	if utilfeature.DefaultFeatureGate.Enabled(features.VolumeAttributesClass) {
-		informersSyncd = append(informersSyncd, ctrl.vacSynced)
-	}
-
 	if !cache.WaitForCacheSync(stopCh, informersSyncd...) {
-		klog.ErrorS(nil, "Cannot sync pod, pv, pvc or vac caches")
+		klog.ErrorS(nil, "Cannot sync pod, pv or pvc caches")
 		return
-	}
-
-	// Cache all the InProgress/Infeasible PVCs as Uncertain for ModifyVolume
-	if utilfeature.DefaultFeatureGate.Enabled(features.VolumeAttributesClass) {
-		err := ctrl.initUncertainPVCs()
-		if err != nil {
-			klog.ErrorS(err, "Failed to initialize uncertain pvcs")
-		}
 	}
 
 	for i := 0; i < workers; i++ {
@@ -404,22 +331,6 @@ func (ctrl *resizeController) syncPVC(key string) error {
 	pv, ok := volumeObj.(*v1.PersistentVolume)
 	if !ok {
 		return fmt.Errorf("expected volume but got %+v", volumeObj)
-	}
-
-	// Only trigger modify volume if the following conditions are met
-	// 1. Feature gate is enabled
-	// 2. Non empty vac name
-	// 3. PVC is in Bound state
-	if utilfeature.DefaultFeatureGate.Enabled(features.VolumeAttributesClass) {
-		vacName := pvc.Spec.VolumeAttributesClassName
-		if vacName != nil && *vacName != "" && pvc.Status.Phase == v1.ClaimBound {
-			_, _, err, _ := ctrl.modify(pvc, pv)
-			if err != nil {
-				return err
-			}
-		} else {
-			klog.V(4).InfoS("No need to modify PV", "PV", klog.KObj(pv))
-		}
 	}
 
 	if utilfeature.DefaultFeatureGate.Enabled(features.AnnotateFsResize) && ctrl.isNodeExpandComplete(pvc, pv) && metav1.HasAnnotation(pv.ObjectMeta, util.AnnPreResizeCapacity) {

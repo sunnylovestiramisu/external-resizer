@@ -1,4 +1,4 @@
-package controller
+package modifycontroller
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"github.com/kubernetes-csi/external-resizer/pkg/csi"
 	"github.com/kubernetes-csi/external-resizer/pkg/features"
 	"github.com/kubernetes-csi/external-resizer/pkg/resizer"
+	"github.com/kubernetes-csi/external-resizer/pkg/testutil"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	v1 "k8s.io/api/core/v1"
@@ -55,7 +56,7 @@ var (
 )
 
 func TestMarkControllerModifyVolumeStatus(t *testing.T) {
-	basePVC := makeTestPVC([]v1.PersistentVolumeClaimCondition{})
+	basePVC := testutil.MakeTestPVC([]v1.PersistentVolumeClaimCondition{})
 
 	tests := []struct {
 		name               string
@@ -63,35 +64,35 @@ func TestMarkControllerModifyVolumeStatus(t *testing.T) {
 		expectedPVC        *v1.PersistentVolumeClaim
 		expectedConditions []v1.PersistentVolumeClaimCondition
 		expectedErr        error
-		testFunc           func(*v1.PersistentVolumeClaim, *resizeController) (*v1.PersistentVolumeClaim, error)
+		testFunc           func(*v1.PersistentVolumeClaim, *modifyController) (*v1.PersistentVolumeClaim, error)
 	}{
 		{
 			name:               "mark modify volume as in progress",
-			pvc:                basePVC.get(),
-			expectedPVC:        basePVC.withModifyVolumeStatus(v1.PersistentVolumeClaimModifyVolumeInProgress).get(),
+			pvc:                basePVC.Get(),
+			expectedPVC:        basePVC.WithModifyVolumeStatus(v1.PersistentVolumeClaimModifyVolumeInProgress).Get(),
 			expectedConditions: []v1.PersistentVolumeClaimCondition{pvcConditionInProgress},
 			expectedErr:        nil,
-			testFunc: func(pvc *v1.PersistentVolumeClaim, ctrl *resizeController) (*v1.PersistentVolumeClaim, error) {
+			testFunc: func(pvc *v1.PersistentVolumeClaim, ctrl *modifyController) (*v1.PersistentVolumeClaim, error) {
 				return ctrl.markControllerModifyVolumeStatus(pvc, v1.PersistentVolumeClaimModifyVolumeInProgress, nil)
 			},
 		},
 		{
 			name:               "mark modify volume as infeasible",
-			pvc:                basePVC.get(),
-			expectedPVC:        basePVC.withModifyVolumeStatus(v1.PersistentVolumeClaimModifyVolumeInfeasible).get(),
+			pvc:                basePVC.Get(),
+			expectedPVC:        basePVC.WithModifyVolumeStatus(v1.PersistentVolumeClaimModifyVolumeInfeasible).Get(),
 			expectedConditions: []v1.PersistentVolumeClaimCondition{pvcConditionInfeasible},
 			expectedErr:        infeasibleErr,
-			testFunc: func(pvc *v1.PersistentVolumeClaim, ctrl *resizeController) (*v1.PersistentVolumeClaim, error) {
+			testFunc: func(pvc *v1.PersistentVolumeClaim, ctrl *modifyController) (*v1.PersistentVolumeClaim, error) {
 				return ctrl.markControllerModifyVolumeStatus(pvc, v1.PersistentVolumeClaimModifyVolumeInfeasible, infeasibleErr)
 			},
 		},
 		{
 			name:               "mark modify volume as pending",
-			pvc:                basePVC.get(),
-			expectedPVC:        basePVC.withModifyVolumeStatus(v1.PersistentVolumeClaimModifyVolumePending).get(),
+			pvc:                basePVC.Get(),
+			expectedPVC:        basePVC.WithModifyVolumeStatus(v1.PersistentVolumeClaimModifyVolumePending).Get(),
 			expectedConditions: nil,
 			expectedErr:        nil,
-			testFunc: func(pvc *v1.PersistentVolumeClaim, ctrl *resizeController) (*v1.PersistentVolumeClaim, error) {
+			testFunc: func(pvc *v1.PersistentVolumeClaim, ctrl *modifyController) (*v1.PersistentVolumeClaim, error) {
 				return ctrl.markControllerModifyVolumeStatus(pvc, v1.PersistentVolumeClaimModifyVolumePending, nil)
 			},
 		},
@@ -101,7 +102,7 @@ func TestMarkControllerModifyVolumeStatus(t *testing.T) {
 		tc := test
 		t.Run(tc.name, func(t *testing.T) {
 			defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.VolumeAttributesClass, true)()
-			client := csi.NewMockClient("foo", true, true, true, true)
+			client := csi.NewMockClient("foo", true, true, true, true, true)
 			driverName, _ := client.GetDriverName(context.TODO())
 
 			pvc := test.pvc
@@ -115,12 +116,12 @@ func TestMarkControllerModifyVolumeStatus(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Test %s: Unable to create resizer: %v", test.name, err)
 			}
-			controller := NewResizeController(driverName,
+			controller := NewModifyController(driverName,
 				csiResizer, kubeClient,
 				time.Second, informerFactory,
-				workqueue.DefaultControllerRateLimiter(), true /*handleVolumeInUseError*/)
+				workqueue.DefaultControllerRateLimiter())
 
-			ctrlInstance, _ := controller.(*resizeController)
+			ctrlInstance, _ := controller.(*modifyController)
 
 			pvc, err = tc.testFunc(pvc, ctrlInstance)
 			if err != nil && !reflect.DeepEqual(tc.expectedErr, err) {
@@ -134,7 +135,7 @@ func TestMarkControllerModifyVolumeStatus(t *testing.T) {
 			}
 
 			realConditions := pvc.Status.Conditions
-			if !compareConditions(realConditions, tc.expectedConditions) {
+			if !testutil.CompareConditions(realConditions, tc.expectedConditions) {
 				t.Errorf("expected conditions %+v got %+v", tc.expectedConditions, realConditions)
 			}
 		})
@@ -142,7 +143,7 @@ func TestMarkControllerModifyVolumeStatus(t *testing.T) {
 }
 
 func TestUpdateConditionBasedOnError(t *testing.T) {
-	basePVC := makeTestPVC([]v1.PersistentVolumeClaimCondition{})
+	basePVC := testutil.MakeTestPVC([]v1.PersistentVolumeClaimCondition{})
 
 	tests := []struct {
 		name               string
@@ -152,7 +153,7 @@ func TestUpdateConditionBasedOnError(t *testing.T) {
 	}{
 		{
 			name:               "update condition based on error",
-			pvc:                basePVC.get(),
+			pvc:                basePVC.Get(),
 			expectedConditions: []v1.PersistentVolumeClaimCondition{pvcConditionError},
 		},
 	}
@@ -161,7 +162,7 @@ func TestUpdateConditionBasedOnError(t *testing.T) {
 		tc := test
 		t.Run(tc.name, func(t *testing.T) {
 			defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.VolumeAttributesClass, true)()
-			client := csi.NewMockClient("foo", true, true, true, true)
+			client := csi.NewMockClient("foo", true, true, true, true, true)
 			driverName, _ := client.GetDriverName(context.TODO())
 
 			pvc := test.pvc
@@ -175,19 +176,19 @@ func TestUpdateConditionBasedOnError(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Test %s: Unable to create resizer: %v", test.name, err)
 			}
-			controller := NewResizeController(driverName,
+			controller := NewModifyController(driverName,
 				csiResizer, kubeClient,
 				time.Second, informerFactory,
-				workqueue.DefaultControllerRateLimiter(), true /*handleVolumeInUseError*/)
+				workqueue.DefaultControllerRateLimiter())
 
-			ctrlInstance, _ := controller.(*resizeController)
+			ctrlInstance, _ := controller.(*modifyController)
 
 			pvc, err = ctrlInstance.updateConditionBasedOnError(tc.pvc, err)
 			if err != nil && !reflect.DeepEqual(tc.expectedErr, err) {
 				t.Errorf("Expected error to be %v but got %v", tc.expectedErr, err)
 			}
 
-			if !compareConditions(pvc.Status.Conditions, tc.expectedConditions) {
+			if !testutil.CompareConditions(pvc.Status.Conditions, tc.expectedConditions) {
 				t.Errorf("expected conditions %+v got %+v", tc.expectedConditions, pvc.Status.Conditions)
 			}
 		})
@@ -195,11 +196,11 @@ func TestUpdateConditionBasedOnError(t *testing.T) {
 }
 
 func TestMarkControllerModifyVolumeCompleted(t *testing.T) {
-	basePVC := makeTestPVC([]v1.PersistentVolumeClaimCondition{})
+	basePVC := testutil.MakeTestPVC([]v1.PersistentVolumeClaimCondition{})
 	basePV := createTestPV(1, pvcName, pvcNamespace, "foobaz" /*pvcUID*/, &fsVolumeMode, testVac)
 	expectedPV := basePV.DeepCopy()
 	expectedPV.Spec.VolumeAttributesClassName = &targetVac
-	expectedPVC := basePVC.withCurrentVolumeAttributesClassName(targetVac).get()
+	expectedPVC := basePVC.WithCurrentVolumeAttributesClassName(targetVac).Get()
 
 	tests := []struct {
 		name        string
@@ -211,14 +212,14 @@ func TestMarkControllerModifyVolumeCompleted(t *testing.T) {
 	}{
 		{
 			name:        "update modify volume status to completed",
-			pvc:         basePVC.get(),
+			pvc:         basePVC.Get(),
 			pv:          basePV,
-			expectedPVC: basePVC.withCurrentVolumeAttributesClassName(targetVac).get(),
+			expectedPVC: basePVC.WithCurrentVolumeAttributesClassName(targetVac).Get(),
 			expectedPV:  expectedPV,
 		},
 		{
 			name:        "update modify volume status to completed, and clear conditions",
-			pvc:         basePVC.withConditions([]v1.PersistentVolumeClaimCondition{pvcConditionInProgress}).get(),
+			pvc:         basePVC.WithConditions([]v1.PersistentVolumeClaimCondition{pvcConditionInProgress}).Get(),
 			pv:          basePV,
 			expectedPVC: expectedPVC,
 			expectedPV:  expectedPV,
@@ -229,7 +230,7 @@ func TestMarkControllerModifyVolumeCompleted(t *testing.T) {
 		tc := test
 		t.Run(tc.name, func(t *testing.T) {
 			defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.VolumeAttributesClass, true)()
-			client := csi.NewMockClient("foo", true, true, true, true)
+			client := csi.NewMockClient("foo", true, true, true, true, true)
 			driverName, _ := client.GetDriverName(context.TODO())
 
 			var initialObjects []runtime.Object
@@ -242,12 +243,12 @@ func TestMarkControllerModifyVolumeCompleted(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Test %s: Unable to create resizer: %v", test.name, err)
 			}
-			controller := NewResizeController(driverName,
+			controller := NewModifyController(driverName,
 				csiResizer, kubeClient,
 				time.Second, informerFactory,
-				workqueue.DefaultControllerRateLimiter(), true /*handleVolumeInUseError*/)
+				workqueue.DefaultControllerRateLimiter())
 
-			ctrlInstance, _ := controller.(*resizeController)
+			ctrlInstance, _ := controller.(*modifyController)
 
 			actualPVC, pv, err := ctrlInstance.markControllerModifyVolumeCompleted(tc.pvc, tc.pv)
 			if err != nil && !reflect.DeepEqual(tc.expectedErr, err) {
@@ -270,9 +271,9 @@ func TestMarkControllerModifyVolumeCompleted(t *testing.T) {
 }
 
 func TestRemovePVCFromModifyVolumeUncertainCache(t *testing.T) {
-	basePVC := makeTestPVC([]v1.PersistentVolumeClaimCondition{})
-	basePVC.withModifyVolumeStatus(v1.PersistentVolumeClaimModifyVolumeInProgress)
-	secondPVC := getTestPVC("test-vol0", "2G", "1G", "", "")
+	basePVC := testutil.MakeTestPVC([]v1.PersistentVolumeClaimCondition{})
+	basePVC.WithModifyVolumeStatus(v1.PersistentVolumeClaimModifyVolumeInProgress)
+	secondPVC := testutil.GetTestPVC("test-vol0", "2G", "1G", "", "")
 	secondPVC.Status.Phase = v1.ClaimBound
 	secondPVC.Status.ModifyVolumeStatus = &v1.ModifyVolumeStatus{}
 	secondPVC.Status.ModifyVolumeStatus.Status = v1.PersistentVolumeClaimModifyVolumeInfeasible
@@ -283,7 +284,7 @@ func TestRemovePVCFromModifyVolumeUncertainCache(t *testing.T) {
 	}{
 		{
 			name: "should delete the target pvc but keep the others in the cache",
-			pvc:  basePVC.get(),
+			pvc:  basePVC.Get(),
 		},
 	}
 
@@ -291,7 +292,7 @@ func TestRemovePVCFromModifyVolumeUncertainCache(t *testing.T) {
 		tc := test
 		t.Run(tc.name, func(t *testing.T) {
 			defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.VolumeAttributesClass, true)()
-			client := csi.NewMockClient("foo", true, true, true, true)
+			client := csi.NewMockClient("foo", true, true, true, true, true)
 			driverName, _ := client.GetDriverName(context.TODO())
 
 			var initialObjects []runtime.Object
@@ -308,12 +309,12 @@ func TestRemovePVCFromModifyVolumeUncertainCache(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Test %s: Unable to create resizer: %v", test.name, err)
 			}
-			controller := NewResizeController(driverName,
+			controller := NewModifyController(driverName,
 				csiResizer, kubeClient,
 				time.Second, informerFactory,
-				workqueue.DefaultControllerRateLimiter(), true /*handleVolumeInUseError*/)
+				workqueue.DefaultControllerRateLimiter())
 
-			ctrlInstance, _ := controller.(*resizeController)
+			ctrlInstance, _ := controller.(*modifyController)
 
 			stopCh := make(chan struct{})
 			informerFactory.Start(stopCh)
@@ -372,7 +373,7 @@ func TestRemovePVCFromModifyVolumeUncertainCache(t *testing.T) {
 }
 
 func createTestPV(capacityGB int, pvcName, pvcNamespace string, pvcUID types.UID, volumeMode *v1.PersistentVolumeMode, vacName string) *v1.PersistentVolume {
-	capacity := quantityGB(capacityGB)
+	capacity := testutil.QuantityGB(capacityGB)
 
 	pv := &v1.PersistentVolume{
 		ObjectMeta: metav1.ObjectMeta{
@@ -402,71 +403,4 @@ func createTestPV(capacityGB int, pvcName, pvcNamespace string, pvcUID types.UID
 		pv.Status.Phase = v1.VolumeBound
 	}
 	return pv
-}
-
-func makeTestPVC(conditions []v1.PersistentVolumeClaimCondition) pvcModifier {
-	pvc := &v1.PersistentVolumeClaim{
-		ObjectMeta: metav1.ObjectMeta{Name: pvcName, Namespace: "modify"},
-		Spec: v1.PersistentVolumeClaimSpec{
-			AccessModes: []v1.PersistentVolumeAccessMode{
-				v1.ReadWriteOnce,
-				v1.ReadOnlyMany,
-			},
-			Resources: v1.VolumeResourceRequirements{
-				Requests: v1.ResourceList{
-					v1.ResourceName(v1.ResourceStorage): resource.MustParse("2Gi"),
-				},
-			},
-			VolumeAttributesClassName: &targetVac,
-		},
-		Status: v1.PersistentVolumeClaimStatus{
-			Phase:      v1.ClaimBound,
-			Conditions: conditions,
-			Capacity: v1.ResourceList{
-				v1.ResourceStorage: resource.MustParse("2Gi"),
-			},
-			CurrentVolumeAttributesClassName: &testVac,
-			ModifyVolumeStatus: &v1.ModifyVolumeStatus{
-				TargetVolumeAttributesClassName: targetVac,
-			},
-		},
-	}
-	return pvcModifier{pvc}
-}
-
-func (m pvcModifier) withModifyVolumeStatus(status v1.PersistentVolumeClaimModifyVolumeStatus) pvcModifier {
-	if m.pvc.Status.ModifyVolumeStatus == nil {
-		m.pvc.Status.ModifyVolumeStatus = &v1.ModifyVolumeStatus{}
-	}
-	m.pvc.Status.ModifyVolumeStatus.Status = status
-	return m
-}
-
-func (m pvcModifier) withCurrentVolumeAttributesClassName(currentVacName string) pvcModifier {
-	if m.pvc.Status.ModifyVolumeStatus == nil {
-		m.pvc.Status.ModifyVolumeStatus = &v1.ModifyVolumeStatus{}
-	}
-	m.pvc.Status.CurrentVolumeAttributesClassName = &currentVacName
-	return m
-}
-
-func (m pvcModifier) withConditions(conditions []v1.PersistentVolumeClaimCondition) pvcModifier {
-	m.pvc.Status.Conditions = conditions
-	return m
-}
-
-func compareConditions(realConditions, expectedConditions []v1.PersistentVolumeClaimCondition) bool {
-	if realConditions == nil && expectedConditions == nil {
-		return true
-	}
-	if (realConditions == nil || expectedConditions == nil) || len(realConditions) != len(expectedConditions) {
-		return false
-	}
-
-	for i, condition := range realConditions {
-		if condition.Type != expectedConditions[i].Type || condition.Message != expectedConditions[i].Message || condition.Status != expectedConditions[i].Status {
-			return false
-		}
-	}
-	return true
 }

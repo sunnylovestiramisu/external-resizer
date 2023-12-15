@@ -22,6 +22,7 @@ func TestNewResizer(t *testing.T) {
 	for i, c := range []struct {
 		SupportsNodeResize                      bool
 		SupportsControllerResize                bool
+		SupportsControllerModify                bool
 		SupportsPluginControllerService         bool
 		SupportsControllerSingleNodeMultiWriter bool
 
@@ -32,6 +33,7 @@ func TestNewResizer(t *testing.T) {
 		{
 			SupportsNodeResize:                      true,
 			SupportsControllerResize:                true,
+			SupportsControllerModify:                true,
 			SupportsPluginControllerService:         true,
 			SupportsControllerSingleNodeMultiWriter: true,
 
@@ -41,15 +43,27 @@ func TestNewResizer(t *testing.T) {
 		{
 			SupportsNodeResize:                      true,
 			SupportsControllerResize:                true,
+			SupportsControllerModify:                true,
 			SupportsPluginControllerService:         false,
 			SupportsControllerSingleNodeMultiWriter: true,
 
 			Error: controllerServiceNotSupportErr,
 		},
+		// Controller modify not supported.
+		{
+			SupportsNodeResize:                      true,
+			SupportsControllerResize:                true,
+			SupportsControllerModify:                false,
+			SupportsPluginControllerService:         true,
+			SupportsControllerSingleNodeMultiWriter: true,
+
+			Trivial: false,
+		},
 		// Only node resize supported.
 		{
 			SupportsNodeResize:                      true,
 			SupportsControllerResize:                false,
+			SupportsControllerModify:                true,
 			SupportsPluginControllerService:         true,
 			SupportsControllerSingleNodeMultiWriter: true,
 
@@ -59,13 +73,14 @@ func TestNewResizer(t *testing.T) {
 		{
 			SupportsNodeResize:                      false,
 			SupportsControllerResize:                false,
+			SupportsControllerModify:                true,
 			SupportsPluginControllerService:         true,
 			SupportsControllerSingleNodeMultiWriter: true,
 
 			Error: resizeNotSupportErr,
 		},
 	} {
-		client := csi.NewMockClient("mock", c.SupportsNodeResize, c.SupportsControllerResize, c.SupportsPluginControllerService, c.SupportsControllerSingleNodeMultiWriter)
+		client := csi.NewMockClient("mock", c.SupportsNodeResize, c.SupportsControllerResize, c.SupportsControllerModify, c.SupportsPluginControllerService, c.SupportsControllerSingleNodeMultiWriter)
 		driverName := "mock-driver"
 		k8sClient, informerFactory := fakeK8s()
 		resizer, err := NewResizerFromClient(client, 0, k8sClient, informerFactory, driverName)
@@ -99,7 +114,7 @@ func TestResizeWithSecret(t *testing.T) {
 		},
 	}
 	for _, tc := range tests {
-		client := csi.NewMockClient("mock", true, true, true, true)
+		client := csi.NewMockClient("mock", true, true, false, true, true)
 		secret := makeSecret("some-secret", "secret-namespace")
 		k8sClient := fake.NewSimpleClientset(secret)
 		pv := makeTestPV("test-csi", 2, "ebs-csi", "vol-abcde", tc.hasExpansionSecret)
@@ -157,7 +172,7 @@ func TestResizeMigratedPV(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			driverName := tc.driverName
-			client := csi.NewMockClient(driverName, true, true, true, true)
+			client := csi.NewMockClient(driverName, true, true, false, true, true)
 			client.SetCheckMigratedLabel()
 			k8sClient, informerFactory := fakeK8s()
 			resizer, err := NewResizerFromClient(client, 0, k8sClient, informerFactory, driverName)
@@ -426,7 +441,7 @@ func TestCanSupport(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			driverName := tc.driverName
-			client := csi.NewMockClient(driverName, true, true, true, true)
+			client := csi.NewMockClient(driverName, true, true, false, true, true)
 			k8sClient, informerFactory := fakeK8s()
 			resizer, err := NewResizerFromClient(client, 0, k8sClient, informerFactory, driverName)
 			if err != nil {

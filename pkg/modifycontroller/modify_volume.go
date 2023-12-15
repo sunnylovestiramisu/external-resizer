@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controller
+package modifycontroller
 
 import (
 	"fmt"
@@ -29,7 +29,7 @@ import (
 )
 
 // The return value bool is only used as a sentinel value when function returns without actually performing modification
-func (ctrl *resizeController) modify(pvc *v1.PersistentVolumeClaim, pv *v1.PersistentVolume) (*v1.PersistentVolumeClaim, *v1.PersistentVolume, error, bool) {
+func (ctrl *modifyController) modify(pvc *v1.PersistentVolumeClaim, pv *v1.PersistentVolume) (*v1.PersistentVolumeClaim, *v1.PersistentVolume, error, bool) {
 	pvcSpecVacName := pvc.Spec.VolumeAttributesClassName
 	curVacName := pvc.Status.CurrentVolumeAttributesClassName
 	targetVacName := pvc.Status.ModifyVolumeStatus.TargetVolumeAttributesClassName
@@ -64,7 +64,7 @@ func (ctrl *resizeController) modify(pvc *v1.PersistentVolumeClaim, pv *v1.Persi
 
 // func validateVACAndModifyVolumeWithTarget validate the VAC. The function sets pvc.Status.ModifyVolumeStatus
 // to Pending if VAC does not exist and proceeds to trigger ModifyVolume if VAC exists
-func (ctrl *resizeController) validateVACAndModifyVolumeWithTarget(
+func (ctrl *modifyController) validateVACAndModifyVolumeWithTarget(
 	pvc *v1.PersistentVolumeClaim,
 	pv *v1.PersistentVolume) (*v1.PersistentVolumeClaim, *v1.PersistentVolume, error, bool) {
 	// The controller only triggers ModifyVolume if pvcSpecVacName is not nil nor empty
@@ -87,7 +87,7 @@ func (ctrl *resizeController) validateVACAndModifyVolumeWithTarget(
 
 // func controllerModifyVolumeWithTarget trigger the CSI ControllerModifyVolume API call
 // and handle both success and error scenarios
-func (ctrl *resizeController) controllerModifyVolumeWithTarget(
+func (ctrl *modifyController) controllerModifyVolumeWithTarget(
 	pvc *v1.PersistentVolumeClaim,
 	pv *v1.PersistentVolume,
 	vacObj *storagev1alpha1.VolumeAttributesClass,
@@ -120,11 +120,11 @@ func (ctrl *resizeController) controllerModifyVolumeWithTarget(
 	}
 }
 
-func (ctrl *resizeController) callModifyVolumeOnPlugin(
+func (ctrl *modifyController) callModifyVolumeOnPlugin(
 	pvc *v1.PersistentVolumeClaim,
 	pv *v1.PersistentVolume,
 	vac *storagev1alpha1.VolumeAttributesClass) (*v1.PersistentVolumeClaim, *v1.PersistentVolume, error) {
-	err := ctrl.resizer.Modify(pv, vac.Parameters)
+	err := ctrl.modifier.Modify(pv, vac.Parameters)
 
 	if err != nil && isFinalError(err) {
 		// Mark pvc.Status.ModifyVolumeStatus as infeasible
@@ -140,4 +140,28 @@ func (ctrl *resizeController) callModifyVolumeOnPlugin(
 
 	pvc, pv, err = ctrl.markControllerModifyVolumeCompleted(pvc, pv)
 	return pvc, pv, nil
+}
+
+func isFinalError(err error) bool {
+	// Sources:
+	// https://github.com/grpc/grpc/blob/master/doc/statuscodes.md
+	// https://github.com/container-storage-interface/spec/blob/master/spec.md
+	st, ok := status.FromError(err)
+	if !ok {
+		// This is not gRPC error. The operation must have failed before gRPC
+		// method was called, otherwise we would get gRPC error.
+		// We don't know if any previous volume operation is in progress, be on the safe side.
+		return false
+	}
+	switch st.Code() {
+	case codes.Canceled, // gRPC: Client Application cancelled the request
+		codes.DeadlineExceeded,  // gRPC: Timeout
+		codes.Unavailable,       // gRPC: Server shutting down, TCP connection broken - previous volume operation may be still in progress.
+		codes.ResourceExhausted, // gRPC: Server temporarily out of resources - previous volume operation may be still in progress.
+		codes.Aborted:           // CSI: Operation pending for volume
+		return false
+	}
+	// All other errors mean that operation either did not
+	// even start or failed. It is for sure not in progress.
+	return true
 }

@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controller
+package modifycontroller
 
 import (
 	"fmt"
@@ -26,7 +26,7 @@ import (
 )
 
 // markControllerModifyVolumeStatus will mark ModifyVolumeStatus other than completed in the PVC
-func (ctrl *resizeController) markControllerModifyVolumeStatus(
+func (ctrl *modifyController) markControllerModifyVolumeStatus(
 	pvc *v1.PersistentVolumeClaim,
 	modifyVolumeStatus v1.PersistentVolumeClaimModifyVolumeStatus,
 	err error) (*v1.PersistentVolumeClaim, error) {
@@ -67,7 +67,7 @@ func (ctrl *resizeController) markControllerModifyVolumeStatus(
 	return updatedPVC, nil
 }
 
-func (ctrl *resizeController) updateConditionBasedOnError(pvc *v1.PersistentVolumeClaim, err error) (*v1.PersistentVolumeClaim, error) {
+func (ctrl *modifyController) updateConditionBasedOnError(pvc *v1.PersistentVolumeClaim, err error) (*v1.PersistentVolumeClaim, error) {
 	newPVC := pvc.DeepCopy()
 	pvcCondition := v1.PersistentVolumeClaimCondition{
 		Type:               v1.PersistentVolumeClaimVolumeModifyVolumeError,
@@ -92,7 +92,7 @@ func (ctrl *resizeController) updateConditionBasedOnError(pvc *v1.PersistentVolu
 
 // markControllerModifyVolumeStatus will mark ModifyVolumeStatus as completed in the PVC
 // and update CurrentVolumeAttributesClassName, clear the conditions
-func (ctrl *resizeController) markControllerModifyVolumeCompleted(pvc *v1.PersistentVolumeClaim, pv *v1.PersistentVolume) (*v1.PersistentVolumeClaim, *v1.PersistentVolume, error) {
+func (ctrl *modifyController) markControllerModifyVolumeCompleted(pvc *v1.PersistentVolumeClaim, pv *v1.PersistentVolume) (*v1.PersistentVolumeClaim, *v1.PersistentVolume, error) {
 	// Update PVC
 	newPVC := pvc.DeepCopy()
 	// Update ModifyVolumeStatus to completed
@@ -141,7 +141,7 @@ func clearModifyVolumeConditions(conditions []v1.PersistentVolumeClaimCondition)
 }
 
 // removePVCFromModifyVolumeUncertainCache removes the pvc from the uncertain cache
-func (ctrl *resizeController) removePVCFromModifyVolumeUncertainCache(pvc *v1.PersistentVolumeClaim) error {
+func (ctrl *modifyController) removePVCFromModifyVolumeUncertainCache(pvc *v1.PersistentVolumeClaim) error {
 	if ctrl.uncertainPVCs == nil {
 		return nil
 	}

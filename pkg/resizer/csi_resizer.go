@@ -63,6 +63,11 @@ func NewResizerFromClient(
 		return nil, fmt.Errorf("failed to check if plugin supports controller resize: %v", err)
 	}
 
+	_, err = supportsControllerModify(csiClient, timeout)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check if plugin supports controller modify: %v", err)
+	}
+
 	if !supportControllerResize {
 		supportsNodeResize, err := supportsNodeResize(csiClient, timeout)
 		if err != nil {
@@ -222,14 +227,6 @@ func (r *csiResizer) Modify(pv *v1.PersistentVolume, mutableParameters map[strin
 	}
 
 	var secrets map[string]string
-	secreRef := source.ControllerExpandSecretRef
-	if secreRef != nil {
-		var err error
-		secrets, err = getCredentials(r.k8sClient, secreRef)
-		if err != nil {
-			return err
-		}
-	}
 
 	ctx, cancel := timeoutCtx(r.timeout)
 
@@ -304,6 +301,12 @@ func supportsNodeResize(client csi.Client, timeout time.Duration) (bool, error) 
 	ctx, cancel := timeoutCtx(timeout)
 	defer cancel()
 	return client.SupportsNodeResize(ctx)
+}
+
+func supportsControllerModify(client csi.Client, timeout time.Duration) (bool, error) {
+	ctx, cancel := timeoutCtx(timeout)
+	defer cancel()
+	return client.SupportsControllerModify(ctx)
 }
 
 func supportsControllerSingleNodeMultiWriter(client csi.Client, timeout time.Duration) (bool, error) {
