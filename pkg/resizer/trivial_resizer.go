@@ -63,7 +63,3 @@ func (r *trivialResizer) DriverSupportsControlPlaneExpansion() bool {
 func (r *trivialResizer) Resize(pv *v1.PersistentVolume, requestSize resource.Quantity) (newSize resource.Quantity, fsResizeRequired bool, err error) {
 	return requestSize, true, nil
 }
-
-func (r *trivialResizer) Modify(pv *v1.PersistentVolume, mutableParameters map[string]string) (err error) {
-	return nil
-}
