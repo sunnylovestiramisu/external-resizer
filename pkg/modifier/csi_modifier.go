@@ -26,7 +26,6 @@ import (
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
-	csitrans "k8s.io/csi-translation-lib"
 )
 
 func NewModifierFromClient(
@@ -72,19 +71,7 @@ func (r *csiModifier) Modify(pv *v1.PersistentVolume, mutableParameters map[stri
 		source = pv.Spec.CSI
 		volumeID = source.VolumeHandle
 	} else {
-		translator := csitrans.New()
-		if translator.IsMigratedCSIDriverByName(r.name) {
-			// handle migrated in-tree volume
-			csiPV, err := translator.TranslateInTreePVToCSI(pv)
-			if err != nil {
-				return fmt.Errorf("failed to translate persistent volume: %v", err)
-			}
-			source = csiPV.Spec.CSI
-			volumeID = source.VolumeHandle
-		} else {
-			// non-migrated in-tree volume
-			return fmt.Errorf("volume %v is not migrated to CSI", pv.Name)
-		}
+		return fmt.Errorf("volume %v is not a CSI volumes, modify volume feature only supports CSI volumes", pv.Name)
 	}
 
 	if len(volumeID) == 0 {

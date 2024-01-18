@@ -288,7 +288,7 @@ func (ctrl *modifyController) sync() {
 
 // syncPVC checks if a pvc requests resizing, and execute the resize operation if requested.
 func (ctrl *modifyController) syncPVC(key string) error {
-	klog.V(4).InfoS("Started PVC processing", "key", key)
+	klog.V(4).InfoS("Started PVC processing for modify controller", "key", key)
 
 	namespace, name, err := cache.SplitMetaNamespaceKey(key)
 	if err != nil {

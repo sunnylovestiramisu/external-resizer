@@ -32,9 +32,15 @@ import (
 func (ctrl *modifyController) modify(pvc *v1.PersistentVolumeClaim, pv *v1.PersistentVolume) (*v1.PersistentVolumeClaim, *v1.PersistentVolume, error, bool) {
 	pvcSpecVacName := pvc.Spec.VolumeAttributesClassName
 	curVacName := pvc.Status.CurrentVolumeAttributesClassName
-	targetVacName := pvc.Status.ModifyVolumeStatus.TargetVolumeAttributesClassName
 
-	if pvcSpecVacName != nil && curVacName != nil && *pvcSpecVacName != *curVacName {
+	if pvcSpecVacName != nil && curVacName == nil {
+		// First time adding VAC to a PVC
+		return ctrl.validateVACAndModifyVolumeWithTarget(pvc, pv)
+	} else if pvcSpecVacName != nil && curVacName != nil && *pvcSpecVacName != *curVacName {
+		targetVacName := *pvcSpecVacName
+		if pvc.Status.ModifyVolumeStatus != nil {
+			targetVacName = pvc.Status.ModifyVolumeStatus.TargetVolumeAttributesClassName
+		}
 		if *curVacName == targetVacName {
 			return ctrl.validateVACAndModifyVolumeWithTarget(pvc, pv)
 		} else {
@@ -74,6 +80,9 @@ func (ctrl *modifyController) validateVACAndModifyVolumeWithTarget(
 	if exists && err == nil {
 		// Mark pvc.Status.ModifyVolumeStatus as in progress
 		pvc, err = ctrl.markControllerModifyVolumeStatus(pvc, v1.PersistentVolumeClaimModifyVolumeInProgress, nil)
+		if err != nil {
+			return pvc, pv, err, false
+		}
 		// Record an event to indicate that external resizer is modifying this volume.
 		ctrl.eventRecorder.Event(pvc, v1.EventTypeNormal, util.VolumeModify,
 			fmt.Sprintf("external resizer is modifying volume %s", pvc.Name))
@@ -81,7 +90,7 @@ func (ctrl *modifyController) validateVACAndModifyVolumeWithTarget(
 	} else {
 		// Mark pvc.Status.ModifyVolumeStatus as pending
 		pvc, err = ctrl.markControllerModifyVolumeStatus(pvc, v1.PersistentVolumeClaimModifyVolumePending, nil)
-		return pvc, pv, nil, false
+		return pvc, pv, err, false
 	}
 }
 
@@ -96,6 +105,8 @@ func (ctrl *modifyController) controllerModifyVolumeWithTarget(
 	pvc, pv, err = ctrl.callModifyVolumeOnPlugin(pvc, pv, vacObj)
 	if err == nil {
 		klog.V(4).Infof("Update volumeAttributesClass of PV %q to %s succeeded", pv.Name, *pvcSpecVacName)
+		// Record an event to indicate that modify operation is successful.
+		ctrl.eventRecorder.Eventf(pvc, v1.EventTypeNormal, util.VolumeModifySuccess, fmt.Sprintf("external resizer modified volume %s successfully ", pvc.Name))
 		return pvc, pv, nil, true
 	} else {
 		if status, ok := status.FromError(err); ok && status.Code() == codes.InvalidArgument {

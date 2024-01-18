@@ -46,6 +46,12 @@ func (ctrl *resizeController) markControllerResizeInProgress(
 	if err != nil {
 		return pvc, err
 	}
+
+	err = ctrl.claims.Update(updatedPVC)
+	if err != nil {
+		return updatedPVC, fmt.Errorf("error updating PVC %s in local cache: %v", klog.KObj(newPVC), err)
+	}
+
 	return updatedPVC, nil
 }
 
@@ -69,6 +75,11 @@ func (ctrl *resizeController) markForPendingNodeExpansion(pvc *v1.PersistentVolu
 		return updatedPVC, fmt.Errorf("mark PVC %q as node expansion required failed: %v", klog.KObj(pvc), err)
 	}
 
+	err = ctrl.claims.Update(updatedPVC)
+	if err != nil {
+		return updatedPVC, fmt.Errorf("error updating PVC %s in local cache: %v", klog.KObj(newPVC), err)
+	}
+
 	klog.V(4).InfoS("Mark PVC as file system resize required", "PVC", klog.KObj(pvc))
 	ctrl.eventRecorder.Eventf(pvc, v1.EventTypeNormal,
 		util.FileSystemResizeRequired, "Require file system resize of volume on node")
@@ -89,6 +100,11 @@ func (ctrl *resizeController) markControllerExpansionFailed(pvc *v1.PersistentVo
 	updatedPVC, err := util.PatchClaim(ctrl.kubeClient, pvc, newPVC, false /* addResourceVersionCheck */)
 	if err != nil {
 		return pvc, fmt.Errorf("mark PVC %q as controller expansion failed, errored with: %v", klog.KObj(pvc), err)
+	}
+
+	err = ctrl.claims.Update(updatedPVC)
+	if err != nil {
+		return updatedPVC, fmt.Errorf("error updating PVC %s in local cache: %v", klog.KObj(newPVC), err)
 	}
 	return updatedPVC, nil
 }
@@ -112,6 +128,11 @@ func (ctrl *resizeController) markOverallExpansionAsFinished(
 	updatedPVC, err := util.PatchClaim(ctrl.kubeClient, pvc, newPVC, true /* addResourceVersionCheck */)
 	if err != nil {
 		return pvc, fmt.Errorf("mark PVC %q as resize finished failed: %v", klog.KObj(pvc), err)
+	}
+
+	err = ctrl.claims.Update(updatedPVC)
+	if err != nil {
+		return updatedPVC, fmt.Errorf("error updating PVC %s in local cache: %v", klog.KObj(newPVC), err)
 	}
 
 	klog.V(4).InfoS("Resize PVC finished", "PVC", klog.KObj(pvc))

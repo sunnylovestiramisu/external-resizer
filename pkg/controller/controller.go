@@ -280,7 +280,7 @@ func (ctrl *resizeController) syncPVCs() {
 
 // syncPVC checks if a pvc requests resizing, and execute the resize operation if requested.
 func (ctrl *resizeController) syncPVC(key string) error {
-	klog.V(4).InfoS("Started PVC processing", "key", key)
+	klog.V(4).InfoS("Started PVC processing for resize controller", "key", key)
 
 	namespace, name, err := cache.SplitMetaNamespaceKey(key)
 	if err != nil {
@@ -490,10 +490,14 @@ func (ctrl *resizeController) markPVCAsFSResizeRequired(pvc *v1.PersistentVolume
 	newPVC.Status.Conditions = util.MergeResizeConditionsOfPVC(newPVC.Status.Conditions,
 		[]v1.PersistentVolumeClaimCondition{pvcCondition})
 
-	_, err := util.PatchClaim(ctrl.kubeClient, pvc, newPVC, true /* addResourceVersionCheck */)
-
+	updatedPVC, err := util.PatchClaim(ctrl.kubeClient, pvc, newPVC, true /* addResourceVersionCheck */)
 	if err != nil {
 		return fmt.Errorf("Mark PVC %q as file system resize required failed: %v", klog.KObj(pvc), err)
+	}
+
+	err = ctrl.claims.Update(updatedPVC)
+	if err != nil {
+		return fmt.Errorf("error updating PVC %s in local cache: %v", klog.KObj(newPVC), err)
 	}
 
 	klog.V(4).InfoS("Mark PVC as file system resize required", "PVC", klog.KObj(pvc))
@@ -516,6 +520,13 @@ func (ctrl *resizeController) markPVCResizeInProgress(pvc *v1.PersistentVolumeCl
 		[]v1.PersistentVolumeClaimCondition{progressCondition})
 
 	updatedPVC, err := util.PatchClaim(ctrl.kubeClient, pvc, newPVC, true /* addResourceVersionCheck */)
+	if err != nil {
+		return updatedPVC, fmt.Errorf("Mark PVC %q as resize as in progress failed: %v", klog.KObj(pvc), err)
+	}
+	err = ctrl.claims.Update(updatedPVC)
+	if err != nil {
+		return updatedPVC, fmt.Errorf("error updating PVC %s in local cache: %v", klog.KObj(newPVC), err)
+	}
 	return updatedPVC, err
 }
 
@@ -526,9 +537,14 @@ func (ctrl *resizeController) markPVCResizeFinished(
 	newPVC.Status.Capacity[v1.ResourceStorage] = newSize
 	newPVC.Status.Conditions = util.MergeResizeConditionsOfPVC(pvc.Status.Conditions, []v1.PersistentVolumeClaimCondition{})
 
-	_, err := util.PatchClaim(ctrl.kubeClient, pvc, newPVC, true /* addResourceVersionCheck */)
+	updatedPVC, err := util.PatchClaim(ctrl.kubeClient, pvc, newPVC, true /* addResourceVersionCheck */)
 	if err != nil {
 		return fmt.Errorf("Mark PVC %q as resize finished failed: %v", klog.KObj(pvc), err)
+	}
+
+	err = ctrl.claims.Update(updatedPVC)
+	if err != nil {
+		return fmt.Errorf("error updating PVC %s in local cache: %v", klog.KObj(newPVC), err)
 	}
 
 	klog.V(4).InfoS("Resize PVC finished", "PVC", klog.KObj(pvc))
