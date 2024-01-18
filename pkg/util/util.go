@@ -17,14 +17,20 @@ limitations under the License.
 package util
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"regexp"
 
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/strategicpatch"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/cache"
+	"k8s.io/klog/v2"
 )
 
 var (
@@ -178,4 +184,45 @@ func SanitizeName(name string) string {
 		name = name + "X"
 	}
 	return name
+}
+
+func GetObjectKey(obj interface{}) (string, error) {
+	if unknown, ok := obj.(cache.DeletedFinalStateUnknown); ok && unknown.Obj != nil {
+		obj = unknown.Obj
+	}
+	objKey, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
+	if err != nil {
+		klog.ErrorS(err, "Failed to get key from object")
+		return "", err
+	}
+	return objKey, nil
+}
+
+// Patches a given PVC with changes from newPVC. If addResourceVersionCheck is true
+// then a version check is added to the patch to ensure that we are not patching
+// old(and possibly outdated) PVC objects.
+func PatchClaim(kubeClient kubernetes.Interface, oldPVC, newPVC *v1.PersistentVolumeClaim, addResourceVersionCheck bool) (*v1.PersistentVolumeClaim, error) {
+	patchBytes, err := GetPVCPatchData(oldPVC, newPVC, addResourceVersionCheck)
+	if err != nil {
+		return oldPVC, fmt.Errorf("can't patch status of PVC %s as generate path data failed: %v", klog.KObj(oldPVC), err)
+	}
+	updatedClaim, updateErr := kubeClient.CoreV1().PersistentVolumeClaims(oldPVC.Namespace).
+		Patch(context.TODO(), oldPVC.Name, types.StrategicMergePatchType, patchBytes, metav1.PatchOptions{}, "status")
+	if updateErr != nil {
+		return oldPVC, fmt.Errorf("can't patch status of  PVC %s with %v", klog.KObj(oldPVC), updateErr)
+	}
+
+	return updatedClaim, nil
+}
+
+func PatchPersistentVolume(kubeClient kubernetes.Interface, oldPV, newPV *v1.PersistentVolume) (*v1.PersistentVolume, error) {
+	patchBytes, err := GetPatchData(oldPV, newPV)
+	if err != nil {
+		return nil, fmt.Errorf("can't update capacity of PV %s as generate path data failed: %v", newPV.Name, err)
+	}
+	updatedPV, updateErr := kubeClient.CoreV1().PersistentVolumes().Patch(context.TODO(), newPV.Name, types.StrategicMergePatchType, patchBytes, metav1.PatchOptions{})
+	if updateErr != nil {
+		return nil, fmt.Errorf("update capacity of PV %s failed: %v", newPV.Name, updateErr)
+	}
+	return updatedPV, nil
 }

@@ -26,8 +26,6 @@ import (
 
 	"github.com/kubernetes-csi/external-resizer/pkg/modifier"
 	v1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/client-go/informers"
@@ -144,7 +142,7 @@ func (ctrl *modifyController) initUncertainPVCs() error {
 }
 
 func (ctrl *modifyController) addPVC(obj interface{}) {
-	objKey, err := getObjectKey(obj)
+	objKey, err := util.GetObjectKey(obj)
 	if err != nil {
 		return
 	}
@@ -193,7 +191,7 @@ func (ctrl *modifyController) updatePVC(oldObj, newObj interface{}) {
 }
 
 func (ctrl *modifyController) deletePVC(obj interface{}) {
-	objKey, err := getObjectKey(obj)
+	objKey, err := util.GetObjectKey(obj)
 	if err != nil {
 		return
 	}
@@ -201,7 +199,7 @@ func (ctrl *modifyController) deletePVC(obj interface{}) {
 }
 
 func (ctrl *modifyController) addVAC(obj interface{}) {
-	objKey, err := getObjectKey(obj)
+	objKey, err := util.GetObjectKey(obj)
 	if err != nil {
 		return
 	}
@@ -209,52 +207,11 @@ func (ctrl *modifyController) addVAC(obj interface{}) {
 }
 
 func (ctrl *modifyController) deleteVAC(obj interface{}) {
-	objKey, err := getObjectKey(obj)
+	objKey, err := util.GetObjectKey(obj)
 	if err != nil {
 		return
 	}
 	ctrl.vacQueue.Forget(objKey)
-}
-
-// Patches a given PVC with changes from newPVC. If addResourceVersionCheck is true
-// then a version check is added to the patch to ensure that we are not patching
-// old(and possibly outdated) PVC objects.
-func (ctrl *modifyController) patchClaim(oldPVC, newPVC *v1.PersistentVolumeClaim, addResourceVersionCheck bool) (*v1.PersistentVolumeClaim, error) {
-	patchBytes, err := util.GetPVCPatchData(oldPVC, newPVC, addResourceVersionCheck)
-	if err != nil {
-		return oldPVC, fmt.Errorf("can't patch status of PVC %s as generate path data failed: %v", klog.KObj(oldPVC), err)
-	}
-	updatedClaim, updateErr := ctrl.kubeClient.CoreV1().PersistentVolumeClaims(oldPVC.Namespace).
-		Patch(context.TODO(), oldPVC.Name, types.StrategicMergePatchType, patchBytes, metav1.PatchOptions{}, "status")
-	if updateErr != nil {
-		return oldPVC, fmt.Errorf("can't patch status of  PVC %s with %v", klog.KObj(oldPVC), updateErr)
-	}
-
-	return updatedClaim, nil
-}
-
-func (ctrl *modifyController) patchPersistentVolume(oldPV, newPV *v1.PersistentVolume) (*v1.PersistentVolume, error) {
-	patchBytes, err := util.GetPatchData(oldPV, newPV)
-	if err != nil {
-		return nil, fmt.Errorf("can't update capacity of PV %s as generate path data failed: %v", newPV.Name, err)
-	}
-	updatedPV, updateErr := ctrl.kubeClient.CoreV1().PersistentVolumes().Patch(context.TODO(), newPV.Name, types.StrategicMergePatchType, patchBytes, metav1.PatchOptions{})
-	if updateErr != nil {
-		return nil, fmt.Errorf("update capacity of PV %s failed: %v", newPV.Name, updateErr)
-	}
-	return updatedPV, nil
-}
-
-func getObjectKey(obj interface{}) (string, error) {
-	if unknown, ok := obj.(cache.DeletedFinalStateUnknown); ok && unknown.Obj != nil {
-		obj = unknown.Obj
-	}
-	objKey, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
-	if err != nil {
-		klog.ErrorS(err, "Failed to get key from object")
-		return "", err
-	}
-	return objKey, nil
 }
 
 // modifyPVC modifies the PVC and PV based on VAC

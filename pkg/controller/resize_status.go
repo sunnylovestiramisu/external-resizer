@@ -42,7 +42,7 @@ func (ctrl *resizeController) markControllerResizeInProgress(
 	newPVC.Status.Conditions = util.MergeResizeConditionsOfPVC(newPVC.Status.Conditions, conditions)
 	newPVC = mergeStorageResourceStatus(newPVC, v1.PersistentVolumeClaimControllerResizeInProgress)
 	newPVC = mergeStorageAllocatedResources(newPVC, newSize)
-	updatedPVC, err := ctrl.patchClaim(pvc, newPVC, true /* addResourceVersionCheck */)
+	updatedPVC, err := util.PatchClaim(ctrl.kubeClient, pvc, newPVC, true /* addResourceVersionCheck */)
 	if err != nil {
 		return pvc, err
 	}
@@ -63,7 +63,7 @@ func (ctrl *resizeController) markForPendingNodeExpansion(pvc *v1.PersistentVolu
 	newPVC.Status.Conditions = util.MergeResizeConditionsOfPVC(newPVC.Status.Conditions,
 		[]v1.PersistentVolumeClaimCondition{pvcCondition})
 	newPVC = mergeStorageResourceStatus(newPVC, v1.PersistentVolumeClaimNodeResizePending)
-	updatedPVC, err := ctrl.patchClaim(pvc, newPVC, true /* addResourceVersionCheck */)
+	updatedPVC, err := util.PatchClaim(ctrl.kubeClient, pvc, newPVC, true /* addResourceVersionCheck */)
 
 	if err != nil {
 		return updatedPVC, fmt.Errorf("mark PVC %q as node expansion required failed: %v", klog.KObj(pvc), err)
@@ -86,7 +86,7 @@ func (ctrl *resizeController) markControllerExpansionFailed(pvc *v1.PersistentVo
 	// operation must be restarted before ResizeStatus can be set to Expansionfailedoncontroller.
 	// Setting addResourceVersionCheck to `false` ensures that we set `ResizeStatus`
 	// even if our version of PVC was slightly older.
-	updatedPVC, err := ctrl.patchClaim(pvc, newPVC, false /* addResourceVersionCheck */)
+	updatedPVC, err := util.PatchClaim(ctrl.kubeClient, pvc, newPVC, false /* addResourceVersionCheck */)
 	if err != nil {
 		return pvc, fmt.Errorf("mark PVC %q as controller expansion failed, errored with: %v", klog.KObj(pvc), err)
 	}
@@ -109,7 +109,7 @@ func (ctrl *resizeController) markOverallExpansionAsFinished(
 		newPVC.Status.AllocatedResourceStatuses = resourceStatusMap
 	}
 
-	updatedPVC, err := ctrl.patchClaim(pvc, newPVC, true /* addResourceVersionCheck */)
+	updatedPVC, err := util.PatchClaim(ctrl.kubeClient, pvc, newPVC, true /* addResourceVersionCheck */)
 	if err != nil {
 		return pvc, fmt.Errorf("mark PVC %q as resize finished failed: %v", klog.KObj(pvc), err)
 	}

@@ -56,7 +56,7 @@ func (ctrl *modifyController) markControllerModifyVolumeStatus(
 			[]v1.PersistentVolumeClaimCondition{pvcCondition})
 	}
 
-	updatedPVC, err := ctrl.patchClaim(pvc, newPVC, true)
+	updatedPVC, err := util.PatchClaim(ctrl.kubeClient, pvc, newPVC, true)
 	if err != nil {
 		return pvc, fmt.Errorf("mark PVC %q as modify volume failed, errored with: %v", pvc.Name, err)
 	}
@@ -83,7 +83,7 @@ func (ctrl *modifyController) updateConditionBasedOnError(pvc *v1.PersistentVolu
 	newPVC.Status.Conditions = util.MergeModifyVolumeConditionsOfPVC(newPVC.Status.Conditions,
 		[]v1.PersistentVolumeClaimCondition{pvcCondition})
 
-	updatedPVC, err := ctrl.patchClaim(pvc, newPVC, false)
+	updatedPVC, err := util.PatchClaim(ctrl.kubeClient, pvc, newPVC, false)
 	if err != nil {
 		return pvc, fmt.Errorf("mark PVC %q as controller expansion failed, errored with: %v", pvc.Name, err)
 	}
@@ -109,7 +109,7 @@ func (ctrl *modifyController) markControllerModifyVolumeCompleted(pvc *v1.Persis
 	var err error
 	newPVC.Status.Conditions, err = clearModifyVolumeConditions(newPVC.Status.Conditions)
 
-	updatedPVC, err := ctrl.patchClaim(pvc, newPVC, false)
+	updatedPVC, err := util.PatchClaim(ctrl.kubeClient, pvc, newPVC, false)
 
 	if err != nil {
 		return pvc, pv, fmt.Errorf("mark PVC %q as ModifyVolumeCompleted failed, errored with: %v", pvc.Name, err)
@@ -119,7 +119,7 @@ func (ctrl *modifyController) markControllerModifyVolumeCompleted(pvc *v1.Persis
 	newPV := pv.DeepCopy()
 	newPV.Spec.VolumeAttributesClassName = &newPVC.Status.ModifyVolumeStatus.TargetVolumeAttributesClassName
 
-	updatedPV, err := ctrl.patchPersistentVolume(pv, newPV)
+	updatedPV, err := util.PatchPersistentVolume(ctrl.kubeClient, pv, newPV)
 	if err != nil {
 		return pvc, pv, fmt.Errorf("update pv.Spec.VolumeAttributesClassName for PVC %q failed, errored with: %v", pvc.Name, err)
 	}
