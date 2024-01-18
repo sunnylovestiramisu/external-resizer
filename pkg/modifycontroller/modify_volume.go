@@ -74,6 +74,9 @@ func (ctrl *modifyController) validateVACAndModifyVolumeWithTarget(
 	if exists && err == nil {
 		// Mark pvc.Status.ModifyVolumeStatus as in progress
 		pvc, err = ctrl.markControllerModifyVolumeStatus(pvc, v1.PersistentVolumeClaimModifyVolumeInProgress, nil)
+		if err != nil {
+			return pvc, pv, err, false
+		}
 		// Record an event to indicate that external resizer is modifying this volume.
 		ctrl.eventRecorder.Event(pvc, v1.EventTypeNormal, util.VolumeModify,
 			fmt.Sprintf("external resizer is modifying volume %s", pvc.Name))
@@ -81,7 +84,7 @@ func (ctrl *modifyController) validateVACAndModifyVolumeWithTarget(
 	} else {
 		// Mark pvc.Status.ModifyVolumeStatus as pending
 		pvc, err = ctrl.markControllerModifyVolumeStatus(pvc, v1.PersistentVolumeClaimModifyVolumePending, nil)
-		return pvc, pv, nil, false
+		return pvc, pv, err, false
 	}
 }
 
