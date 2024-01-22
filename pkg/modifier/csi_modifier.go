@@ -26,6 +26,7 @@ import (
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/klog/v2"
 )
 
 func NewModifierFromClient(
@@ -34,6 +35,8 @@ func NewModifierFromClient(
 	k8sClient kubernetes.Interface,
 	informerFactory informers.SharedInformerFactory,
 	driverName string) (Modifier, error) {
+
+	klog.InfoS("===== Creating NewModifierFromClient =====")
 
 	_, err := supportsControllerModify(csiClient, timeout)
 	if err != nil {
@@ -62,6 +65,8 @@ func (r *csiModifier) Name() string {
 }
 
 func (r *csiModifier) Modify(pv *v1.PersistentVolume, mutableParameters map[string]string) error {
+
+	klog.InfoS("===== Calling Modify =====")
 
 	var volumeID string
 	var source *v1.CSIPersistentVolumeSource

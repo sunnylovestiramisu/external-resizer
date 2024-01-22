@@ -182,6 +182,7 @@ func main() {
 		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
 	}
 
+	klog.V(2).InfoS("===== Creating csiModifier =====")
 	csiModifier, err := modifier.NewModifierFromClient(
 		csiClient,
 		*timeout,
@@ -214,7 +215,9 @@ func main() {
 	modifierName := csiModifier.Name()
 	var mc modifycontroller.ModifyController
 	// Add modify controller only if the feature gate is enabled
+	klog.V(2).InfoS("===== Check if VolumeAttributesClass is Enabled =====")
 	if utilfeature.DefaultFeatureGate.Enabled(features.VolumeAttributesClass) {
+		klog.V(2).InfoS("===== VolumeAttributesClass Enabled =====")
 		mc = modifycontroller.NewModifyController(modifierName, csiModifier, kubeClient, *resyncPeriod, informerFactory,
 			workqueue.NewItemExponentialFailureRateLimiter(*retryIntervalStart, *retryIntervalMax))
 	}
@@ -223,6 +226,7 @@ func main() {
 		informerFactory.Start(wait.NeverStop)
 		go rc.Run(*workers, ctx)
 		if utilfeature.DefaultFeatureGate.Enabled(features.VolumeAttributesClass) {
+			klog.V(2).InfoS("===== VolumeAttributesClass Enabled Run =====")
 			go mc.Run(*workers, ctx)
 		}
 		<-ctx.Done()

@@ -78,6 +78,7 @@ func NewModifyController(
 	resyncPeriod time.Duration,
 	informerFactory informers.SharedInformerFactory,
 	pvcRateLimiter workqueue.RateLimiter) ModifyController {
+	klog.InfoS("===== Creating NewModifyController =====")
 	pvInformer := informerFactory.Core().V1().PersistentVolumes()
 	pvcInformer := informerFactory.Core().V1().PersistentVolumeClaims()
 	vacInformer := informerFactory.Storage().V1alpha1().VolumeAttributesClasses()
@@ -126,6 +127,7 @@ func NewModifyController(
 }
 
 func (ctrl *modifyController) initUncertainPVCs() error {
+	klog.InfoS("===== initUncertainPVCs =====")
 	ctrl.uncertainPVCs = make(map[string]v1.PersistentVolumeClaim)
 	for _, pvcObj := range ctrl.claims.List() {
 		pvc := pvcObj.(*v1.PersistentVolumeClaim)
@@ -216,6 +218,7 @@ func (ctrl *modifyController) deleteVAC(obj interface{}) {
 
 // modifyPVC modifies the PVC and PV based on VAC
 func (ctrl *modifyController) modifyPVC(pvc *v1.PersistentVolumeClaim, pv *v1.PersistentVolume) error {
+	klog.InfoS("===== modifyPVC in modifyController =====")
 	var err error
 	if isFirstTimeModifyVolumeWithPVC(pvc, pv) {
 		// If it is first time adding a vac, always validate and then call modify volume
