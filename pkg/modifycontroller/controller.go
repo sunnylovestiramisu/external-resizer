@@ -53,19 +53,11 @@ type modifyController struct {
 	claimQueue      workqueue.RateLimitingInterface
 	vacQueue        workqueue.RateLimitingInterface
 	eventRecorder   record.EventRecorder
-	pvSynced        cache.InformerSynced
-	pvcSynced       cache.InformerSynced
-	vacSynced       cache.InformerSynced
+	pvInformer      cache.SharedIndexInformer
+	pvcInformer     cache.SharedIndexInformer
+	vacInformer     cache.SharedIndexInformer
 	podLister       corelisters.PodLister
 	podListerSynced cache.InformerSynced
-
-	// a cache to store PersistentVolume objects
-	volumes cache.Store
-	// a cache to store PersistentVolumeClaim objects
-	claims cache.Store
-	// a cache to store VolumeAttributesClass objects
-	volumeAttributesClasses cache.Store
-	// a cache to store modify volume in progress or infeasible PVCs in uncertain state
 	// the key of the map is {PVC_NAMESPACE}/{PVC_NAME}
 	uncertainPVCs map[string]v1.PersistentVolumeClaim
 }
@@ -93,18 +85,17 @@ func NewModifyController(
 		pvcRateLimiter, fmt.Sprintf("%s-vac", name))
 
 	ctrl := &modifyController{
-		name:                    name,
-		modifier:                modifier,
-		kubeClient:              kubeClient,
-		pvSynced:                pvInformer.Informer().HasSynced,
-		pvcSynced:               pvcInformer.Informer().HasSynced,
-		vacSynced:               vacInformer.Informer().HasSynced,
-		claimQueue:              claimQueue,
-		vacQueue:                vacQueue,
-		volumes:                 pvInformer.Informer().GetStore(),
-		claims:                  pvcInformer.Informer().GetStore(),
-		volumeAttributesClasses: vacInformer.Informer().GetStore(),
-		eventRecorder:           eventRecorder,
+		name:        name,
+		modifier:    modifier,
+		kubeClient:  kubeClient,
+		pvInformer:  pvInformer.Informer(),
+		pvcInformer: pvcInformer.Informer(),
+		vacInformer: vacInformer.Informer(),
+		// pvSynced:                pvInformer.Informer().HasSynced,
+		claimQueue: claimQueue,
+		vacQueue:   vacQueue,
+		// volumes:                 pvInformer.Informer().GetStore(),
+		eventRecorder: eventRecorder,
 	}
 
 	// Add a resync period as the PVC's request modify can be modified again when we handling
@@ -127,7 +118,7 @@ func NewModifyController(
 
 func (ctrl *modifyController) initUncertainPVCs() error {
 	ctrl.uncertainPVCs = make(map[string]v1.PersistentVolumeClaim)
-	for _, pvcObj := range ctrl.claims.List() {
+	for _, pvcObj := range ctrl.pvcInformer.GetStore().List() {
 		pvc := pvcObj.(*v1.PersistentVolumeClaim)
 		if pvc.Status.ModifyVolumeStatus != nil && (pvc.Status.ModifyVolumeStatus.Status == v1.PersistentVolumeClaimModifyVolumeInProgress || pvc.Status.ModifyVolumeStatus.Status == v1.PersistentVolumeClaimModifyVolumeInfeasible) {
 			pvcKey, err := cache.MetaNamespaceKeyFunc(pvc)
@@ -167,7 +158,7 @@ func (ctrl *modifyController) updatePVC(oldObj, newObj interface{}) {
 	oldVacName := oldPVC.Spec.VolumeAttributesClassName
 	newVacName := newPVC.Spec.VolumeAttributesClassName
 	if newVacName != nil && *newVacName != "" && *newVacName != *oldVacName && oldPVC.Status.Phase == v1.ClaimBound {
-		volumeObj, exists, err := ctrl.volumes.GetByKey(oldPVC.Spec.VolumeName)
+		volumeObj, exists, err := ctrl.pvInformer.GetStore().GetByKey(oldPVC.Spec.VolumeName)
 		if err != nil {
 			klog.Errorf("Get PV %q of pvc %q failed: %v", oldPVC.Spec.VolumeName, klog.KObj(oldPVC), err)
 			return
@@ -242,12 +233,8 @@ func (ctrl *modifyController) Run(
 	defer klog.InfoS("Shutting down external resizer", "controller", ctrl.name)
 
 	stopCh := ctx.Done()
-	informersSyncd := []cache.InformerSynced{ctrl.pvSynced, ctrl.pvcSynced}
-
-	// Only WaitForCacheSync for VAC if feature gate is enabled
-	if utilfeature.DefaultFeatureGate.Enabled(features.VolumeAttributesClass) {
-		informersSyncd = append(informersSyncd, ctrl.vacSynced)
-	}
+	informersSyncd := []cache.InformerSynced{ctrl.pvInformer.HasSynced, ctrl.pvcInformer.HasSynced}
+	informersSyncd = append(informersSyncd, ctrl.vacInformer.HasSynced)
 
 	if !cache.WaitForCacheSync(stopCh, informersSyncd...) {
 		klog.ErrorS(nil, "Cannot sync pod, pv, pvc or vac caches")
@@ -255,11 +242,9 @@ func (ctrl *modifyController) Run(
 	}
 
 	// Cache all the InProgress/Infeasible PVCs as Uncertain for ModifyVolume
-	if utilfeature.DefaultFeatureGate.Enabled(features.VolumeAttributesClass) {
-		err := ctrl.initUncertainPVCs()
-		if err != nil {
-			klog.ErrorS(err, "Failed to initialize uncertain pvcs")
-		}
+	err := ctrl.initUncertainPVCs()
+	if err != nil {
+		klog.ErrorS(err, "Failed to initialize uncertain pvcs")
 	}
 
 	for i := 0; i < workers; i++ {
@@ -295,7 +280,7 @@ func (ctrl *modifyController) syncPVC(key string) error {
 		return fmt.Errorf("getting namespace and name from key %s failed: %v", key, err)
 	}
 
-	pvcObject, exists, err := ctrl.claims.GetByKey(key)
+	pvcObject, exists, err := ctrl.pvcInformer.GetStore().GetByKey(key)
 	if err != nil {
 		return fmt.Errorf("getting PVC %s/%s failed: %v", namespace, name, err)
 	}
@@ -315,7 +300,7 @@ func (ctrl *modifyController) syncPVC(key string) error {
 		return nil
 	}
 
-	volumeObj, exists, err := ctrl.volumes.GetByKey(pvc.Spec.VolumeName)
+	volumeObj, exists, err := ctrl.pvInformer.GetStore().GetByKey(pvc.Spec.VolumeName)
 	if err != nil {
 		return fmt.Errorf("Get PV %q of pvc %q failed: %v", pvc.Spec.VolumeName, klog.KObj(pvc), err)
 	}
