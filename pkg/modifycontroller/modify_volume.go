@@ -55,11 +55,11 @@ func (ctrl *modifyController) modify(pvc *v1.PersistentVolumeClaim, pv *v1.Persi
 				klog.V(3).InfoS("previous operation on the PVC failed with a final error, retrying")
 				return ctrl.validateVACAndModifyVolumeWithTarget(pvc, pv)
 			} else {
-				vacObj, _, err := ctrl.vacInformer.GetStore().GetByKey(*pvcSpecVacName)
+				vac, err := ctrl.vacLister.Get(*pvcSpecVacName)
 				if err != nil {
 					return pvc, pv, err, false
 				}
-				return ctrl.controllerModifyVolumeWithTarget(pvc, pv, vacObj.(*storagev1alpha1.VolumeAttributesClass), pvcSpecVacName)
+				return ctrl.controllerModifyVolumeWithTarget(pvc, pv, vac, pvcSpecVacName)
 			}
 		}
 
@@ -76,8 +76,8 @@ func (ctrl *modifyController) validateVACAndModifyVolumeWithTarget(
 	// The controller only triggers ModifyVolume if pvcSpecVacName is not nil nor empty
 	pvcSpecVacName := pvc.Spec.VolumeAttributesClassName
 	// Check if pvcSpecVac is valid and exist
-	vacObj, exists, err := ctrl.vacInformer.GetStore().GetByKey(*pvcSpecVacName)
-	if exists && err == nil {
+	vac, err := ctrl.vacLister.Get(*pvcSpecVacName)
+	if err == nil {
 		// Mark pvc.Status.ModifyVolumeStatus as in progress
 		pvc, err = ctrl.markControllerModifyVolumeStatus(pvc, v1.PersistentVolumeClaimModifyVolumeInProgress, nil)
 		if err != nil {
@@ -85,9 +85,10 @@ func (ctrl *modifyController) validateVACAndModifyVolumeWithTarget(
 		}
 		// Record an event to indicate that external resizer is modifying this volume.
 		ctrl.eventRecorder.Event(pvc, v1.EventTypeNormal, util.VolumeModify,
-			fmt.Sprintf("external resizer is modifying volume %s with vac %s", pvc.Name, vacObj.(*storagev1alpha1.VolumeAttributesClass).Name))
-		return ctrl.controllerModifyVolumeWithTarget(pvc, pv, vacObj.(*storagev1alpha1.VolumeAttributesClass), pvcSpecVacName)
+			fmt.Sprintf("external resizer is modifying volume %s with vac %s", pvc.Name, vac.Name))
+		return ctrl.controllerModifyVolumeWithTarget(pvc, pv, vac, pvcSpecVacName)
 	} else {
+		klog.Errorf("Get VAC with vac name %s in PVInformer cache failed: %v", vac.Name, err)
 		// Mark pvc.Status.ModifyVolumeStatus as pending
 		pvc, err = ctrl.markControllerModifyVolumeStatus(pvc, v1.PersistentVolumeClaimModifyVolumePending, nil)
 		return pvc, pv, err, false
