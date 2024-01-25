@@ -55,11 +55,11 @@ func (ctrl *modifyController) modify(pvc *v1.PersistentVolumeClaim, pv *v1.Persi
 				klog.V(3).InfoS("previous operation on the PVC failed with a final error, retrying")
 				return ctrl.validateVACAndModifyVolumeWithTarget(pvc, pv)
 			} else {
-				vacObj, _, err := ctrl.vacInformer.GetStore().GetByKey(*pvcSpecVacName)
+				vac, err := ctrl.vacLister.Get(*pvcSpecVacName)
 				if err != nil {
 					return pvc, pv, err, false
 				}
-				return ctrl.controllerModifyVolumeWithTarget(pvc, pv, vacObj.(*storagev1alpha1.VolumeAttributesClass), pvcSpecVacName)
+				return ctrl.controllerModifyVolumeWithTarget(pvc, pv, vac, pvcSpecVacName)
 			}
 		}
 
@@ -76,8 +76,8 @@ func (ctrl *modifyController) validateVACAndModifyVolumeWithTarget(
 	// The controller only triggers ModifyVolume if pvcSpecVacName is not nil nor empty
 	pvcSpecVacName := pvc.Spec.VolumeAttributesClassName
 	// Check if pvcSpecVac is valid and exist
-	vacObj, exists, err := ctrl.vacInformer.GetStore().GetByKey(*pvcSpecVacName)
-	if exists && err == nil {
+	vac, err := ctrl.vacLister.Get(*pvcSpecVacName)
+	if err == nil {
 		// Mark pvc.Status.ModifyVolumeStatus as in progress
 		pvc, err = ctrl.markControllerModifyVolumeStatus(pvc, v1.PersistentVolumeClaimModifyVolumeInProgress, nil)
 		if err != nil {
@@ -85,9 +85,10 @@ func (ctrl *modifyController) validateVACAndModifyVolumeWithTarget(
 		}
 		// Record an event to indicate that external resizer is modifying this volume.
 		ctrl.eventRecorder.Event(pvc, v1.EventTypeNormal, util.VolumeModify,
-			fmt.Sprintf("external resizer is modifying volume %s with vac %s", pvc.Name, vacObj.(*storagev1alpha1.VolumeAttributesClass).Name))
-		return ctrl.controllerModifyVolumeWithTarget(pvc, pv, vacObj.(*storagev1alpha1.VolumeAttributesClass), pvcSpecVacName)
+			fmt.Sprintf("external resizer is modifying volume %s with vac %s", pvc.Name, *pvcSpecVacName))
+		return ctrl.controllerModifyVolumeWithTarget(pvc, pv, vac, pvcSpecVacName)
 	} else {
+		klog.Errorf("Get VAC with vac name %s in VACInformer cache failed: %v", *pvcSpecVacName, err)
 		// Mark pvc.Status.ModifyVolumeStatus as pending
 		pvc, err = ctrl.markControllerModifyVolumeStatus(pvc, v1.PersistentVolumeClaimModifyVolumePending, nil)
 		return pvc, pv, err, false
@@ -109,12 +110,16 @@ func (ctrl *modifyController) controllerModifyVolumeWithTarget(
 		ctrl.eventRecorder.Eventf(pvc, v1.EventTypeNormal, util.VolumeModifySuccess, fmt.Sprintf("external resizer modified volume %s with vac %s successfully ", pvc.Name, vacObj.Name))
 		return pvc, pv, nil, true
 	} else {
-		if status, ok := status.FromError(err); ok && status.Code() == codes.InvalidArgument {
+		status, ok := status.FromError(err)
+		if ok && status.Code() == codes.InvalidArgument {
 			// Mark pvc.Status.ModifyVolumeStatus as infeasible
-			pvc, err = ctrl.markControllerModifyVolumeStatus(pvc, v1.PersistentVolumeClaimModifyVolumeInfeasible, err)
+			pvc, markModifyVolumeInfeasibleError := ctrl.markControllerModifyVolumeStatus(pvc, v1.PersistentVolumeClaimModifyVolumeInfeasible, err)
+			if markModifyVolumeInfeasibleError != nil {
+				return pvc, pv, markModifyVolumeInfeasibleError, false
+			}
 		} else {
 			ctrl.updateConditionBasedOnError(pvc, err)
-			if !isFinalError(err) {
+			if !util.IsFinalError(err) {
 				// update conditions and cache pvc as uncertain
 				pvcKey, err := cache.MetaNamespaceKeyFunc(pvc)
 				if err != nil {
@@ -122,6 +127,11 @@ func (ctrl *modifyController) controllerModifyVolumeWithTarget(
 				}
 				ctrl.uncertainPVCs[pvcKey] = *pvc
 			} else {
+				// Mark pvc.Status.ModifyVolumeStatus as infeasible
+				pvc, markModifyVolumeInfeasibleError := ctrl.markControllerModifyVolumeStatus(pvc, v1.PersistentVolumeClaimModifyVolumeInfeasible, err)
+				if markModifyVolumeInfeasibleError != nil {
+					return pvc, pv, markModifyVolumeInfeasibleError, false
+				}
 				ctrl.removePVCFromModifyVolumeUncertainCache(pvc)
 			}
 		}
@@ -137,42 +147,13 @@ func (ctrl *modifyController) callModifyVolumeOnPlugin(
 	vac *storagev1alpha1.VolumeAttributesClass) (*v1.PersistentVolumeClaim, *v1.PersistentVolume, error) {
 	err := ctrl.modifier.Modify(pv, vac.Parameters)
 
-	if err != nil && isFinalError(err) {
-		// Mark pvc.Status.ModifyVolumeStatus as infeasible
-		pvc, markModifyVolumeInfeasibleError := ctrl.markControllerModifyVolumeStatus(pvc, v1.PersistentVolumeClaimModifyVolumeInfeasible, err)
-		if markModifyVolumeInfeasibleError != nil {
-			return pvc, pv, fmt.Errorf("modify volume failed in controller with %v but failed to update PVC %s with: %v", err, pvc.Name, markModifyVolumeInfeasibleError)
-		}
-	}
-
 	if err != nil {
 		return pvc, pv, err
 	}
 
 	pvc, pv, err = ctrl.markControllerModifyVolumeCompleted(pvc, pv)
+	if err != nil {
+		return pvc, pv, fmt.Errorf("modify volume failed to mark pvc %s modify volume completed: %v ", pvc.Name, err)
+	}
 	return pvc, pv, nil
-}
-
-func isFinalError(err error) bool {
-	// Sources:
-	// https://github.com/grpc/grpc/blob/master/doc/statuscodes.md
-	// https://github.com/container-storage-interface/spec/blob/master/spec.md
-	st, ok := status.FromError(err)
-	if !ok {
-		// This is not gRPC error. The operation must have failed before gRPC
-		// method was called, otherwise we would get gRPC error.
-		// We don't know if any previous volume operation is in progress, be on the safe side.
-		return false
-	}
-	switch st.Code() {
-	case codes.Canceled, // gRPC: Client Application cancelled the request
-		codes.DeadlineExceeded,  // gRPC: Timeout
-		codes.Unavailable,       // gRPC: Server shutting down, TCP connection broken - previous volume operation may be still in progress.
-		codes.ResourceExhausted, // gRPC: Server temporarily out of resources - previous volume operation may be still in progress.
-		codes.Aborted:           // CSI: Operation pending for volume
-		return false
-	}
-	// All other errors mean that operation either did not
-	// even start or failed. It is for sure not in progress.
-	return true
 }
