@@ -23,6 +23,7 @@ import (
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/klog/v2"
 )
 
 // markControllerModifyVolumeStatus will mark ModifyVolumeStatus other than completed in the PVC
@@ -30,6 +31,7 @@ func (ctrl *modifyController) markControllerModifyVolumeStatus(
 	pvc *v1.PersistentVolumeClaim,
 	modifyVolumeStatus v1.PersistentVolumeClaimModifyVolumeStatus,
 	err error) (*v1.PersistentVolumeClaim, error) {
+	klog.InfoS("===== markControllerModifyVolumeStatus =====")
 
 	newPVC := pvc.DeepCopy()
 	if newPVC.Status.ModifyVolumeStatus == nil {
@@ -69,6 +71,7 @@ func (ctrl *modifyController) markControllerModifyVolumeStatus(
 }
 
 func (ctrl *modifyController) updateConditionBasedOnError(pvc *v1.PersistentVolumeClaim, err error) (*v1.PersistentVolumeClaim, error) {
+	klog.InfoS("===== updateConditionBasedOnError =====")
 	newPVC := pvc.DeepCopy()
 	pvcCondition := v1.PersistentVolumeClaimCondition{
 		Type:               v1.PersistentVolumeClaimVolumeModifyVolumeError,
@@ -94,6 +97,7 @@ func (ctrl *modifyController) updateConditionBasedOnError(pvc *v1.PersistentVolu
 // markControllerModifyVolumeStatus will mark ModifyVolumeStatus as completed in the PVC
 // and update CurrentVolumeAttributesClassName, clear the conditions
 func (ctrl *modifyController) markControllerModifyVolumeCompleted(pvc *v1.PersistentVolumeClaim, pv *v1.PersistentVolume) (*v1.PersistentVolumeClaim, *v1.PersistentVolume, error) {
+	klog.InfoS("===== markControllerModifyVolumeCompleted =====")
 	// Update PVC
 	newPVC := pvc.DeepCopy()
 	// Update ModifyVolumeStatus to completed

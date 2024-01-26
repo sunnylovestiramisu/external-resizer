@@ -140,12 +140,15 @@ func (ctrl *modifyController) addPVC(obj interface{}) {
 }
 
 func (ctrl *modifyController) updatePVC(oldObj, newObj interface{}) {
+	klog.InfoS("===== updatePVC =====")
 	oldPVC, ok := oldObj.(*v1.PersistentVolumeClaim)
+	klog.InfoS("===== oldPVC is %v =====", oldPVC)
 	if !ok || oldPVC == nil {
 		return
 	}
 
 	newPVC, ok := newObj.(*v1.PersistentVolumeClaim)
+	klog.InfoS("===== newPVC is %v =====", newPVC)
 	if !ok || newPVC == nil {
 		return
 	}
@@ -156,6 +159,13 @@ func (ctrl *modifyController) updatePVC(oldObj, newObj interface{}) {
 	// 3. PVC is in Bound state
 	oldVacName := oldPVC.Spec.VolumeAttributesClassName
 	newVacName := newPVC.Spec.VolumeAttributesClassName
+	if oldVacName != nil {
+		klog.InfoS("===== oldVacName is %v =====", *oldVacName)
+	}
+
+	if newVacName != nil {
+		klog.InfoS("===== newVacName is %v =====", *newVacName)
+	}
 	if newVacName != nil && *newVacName != "" && (*newVacName != *oldVacName || oldVacName == nil) && oldPVC.Status.Phase == v1.ClaimBound {
 		_, err := ctrl.pvLister.Get(oldPVC.Spec.VolumeName)
 		if err != nil {
@@ -228,17 +238,21 @@ func (ctrl *modifyController) Run(
 
 // sync is the main worker to sync PVCs.
 func (ctrl *modifyController) sync() {
+	klog.V(4).InfoS("===== sync all the PVCs in main worker =====")
 	key, quit := ctrl.claimQueue.Get()
 	if quit {
+		klog.V(4).InfoS("===== quit =====")
 		return
 	}
 	defer ctrl.claimQueue.Done(key)
 
 	if err := ctrl.syncPVC(key.(string)); err != nil {
+		klog.V(4).InfoS("===== ctrl.syncPVC called =====")
 		// Put PVC back to the queue so that we can retry later.
 		klog.ErrorS(err, "Error syncing PVC")
 		ctrl.claimQueue.AddRateLimited(key)
 	} else {
+		klog.V(4).InfoS("===== Forget =====")
 		ctrl.claimQueue.Forget(key)
 	}
 }
@@ -248,12 +262,15 @@ func (ctrl *modifyController) syncPVC(key string) error {
 	klog.V(4).InfoS("Started PVC processing for modify controller", "key", key)
 
 	namespace, name, err := cache.SplitMetaNamespaceKey(key)
+	klog.InfoS("===== namespace is %v, name is %v =====", namespace, name)
 	if err != nil {
+		klog.InfoS("===== Error in cache.SplitMetaNamespaceKey =====")
 		return fmt.Errorf("getting namespace and name from key %s failed: %v", key, err)
 	}
 
 	pvc, err := ctrl.pvcLister.PersistentVolumeClaims(namespace).Get(name)
 	if err != nil {
+		klog.InfoS("===== Error calling ctrl.pvcLister.PersistentVolumeClaims(namespace).Get(name) in syncPVC =====", "err", err)
 		return fmt.Errorf("getting PVC %s/%s failed: %v", namespace, name, err)
 	}
 
@@ -264,6 +281,7 @@ func (ctrl *modifyController) syncPVC(key string) error {
 
 	pv, err := ctrl.pvLister.Get(pvc.Spec.VolumeName)
 	if err != nil {
+		klog.InfoS("===== Error calling ctrl.pvLister.Get(pvc.Spec.VolumeName) in syncPVC =====", "err", err)
 		return fmt.Errorf("Get PV %q of pvc %q in PVInformer cache failed: %v", pvc.Spec.VolumeName, klog.KObj(pvc), err)
 	}
 

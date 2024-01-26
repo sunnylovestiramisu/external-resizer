@@ -30,17 +30,23 @@ import (
 
 // The return value bool is only used as a sentinel value when function returns without actually performing modification
 func (ctrl *modifyController) modify(pvc *v1.PersistentVolumeClaim, pv *v1.PersistentVolume) (*v1.PersistentVolumeClaim, *v1.PersistentVolume, error, bool) {
+	klog.InfoS("===== calling modify in modify_volume.go =====")
 	pvcSpecVacName := pvc.Spec.VolumeAttributesClassName
 	curVacName := pvc.Status.CurrentVolumeAttributesClassName
 
+	klog.InfoS("===== controller modify call =====", "pvcSpecVacName", pvcSpecVacName)
+	klog.InfoS("===== controller modify call =====", "curVacName", curVacName)
+
 	if pvcSpecVacName != nil && curVacName == nil {
 		// First time adding VAC to a PVC
+		klog.InfoS("===== First time adding VAC to a PVC =====")
 		return ctrl.validateVACAndModifyVolumeWithTarget(pvc, pv)
 	} else if pvcSpecVacName != nil && curVacName != nil && *pvcSpecVacName != *curVacName {
 		targetVacName := *pvcSpecVacName
 		if pvc.Status.ModifyVolumeStatus != nil {
 			targetVacName = pvc.Status.ModifyVolumeStatus.TargetVolumeAttributesClassName
 		}
+		klog.InfoS("===== controller modify call =====", "targetVacName", targetVacName)
 		if *curVacName == targetVacName {
 			return ctrl.validateVACAndModifyVolumeWithTarget(pvc, pv)
 		} else {
@@ -65,6 +71,7 @@ func (ctrl *modifyController) modify(pvc *v1.PersistentVolumeClaim, pv *v1.Persi
 
 	}
 	// No modification required
+	klog.InfoS("===== No modification required =====")
 	return pvc, pv, nil, false
 }
 
@@ -73,6 +80,7 @@ func (ctrl *modifyController) modify(pvc *v1.PersistentVolumeClaim, pv *v1.Persi
 func (ctrl *modifyController) validateVACAndModifyVolumeWithTarget(
 	pvc *v1.PersistentVolumeClaim,
 	pv *v1.PersistentVolume) (*v1.PersistentVolumeClaim, *v1.PersistentVolume, error, bool) {
+	klog.InfoS("===== validateVACAndModifyVolumeWithTarget =====")
 	// The controller only triggers ModifyVolume if pvcSpecVacName is not nil nor empty
 	pvcSpecVacName := pvc.Spec.VolumeAttributesClassName
 	// Check if pvcSpecVac is valid and exist

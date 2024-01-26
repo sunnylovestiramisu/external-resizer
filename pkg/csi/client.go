@@ -26,6 +26,7 @@ import (
 	"github.com/kubernetes-csi/csi-lib-utils/metrics"
 	csirpc "github.com/kubernetes-csi/csi-lib-utils/rpc"
 	"google.golang.org/grpc"
+	"k8s.io/klog/v2"
 )
 
 // Client is a gRPC client connect to remote CSI driver and abstracts all CSI calls.
@@ -176,6 +177,7 @@ func (c *client) Modify(
 		MutableParameters: mutableParameters,
 	}
 
+	klog.InfoS("===== client Modify request is %v =====", req)
 	_, err := c.ctrlClient.ControllerModifyVolume(ctx, req)
 	if err != nil {
 		return err
